@@ -1,0 +1,85 @@
+# Blueberry Funded —
+# https://help.blueberryfunded.com/en/articles/15967669-when-is-crypto-trading-paused-for-scheduled-maintenance
+#
+# Verified against the live page on 2026-08-17 (recorded in
+# tests/fixtures/blueberry-funded/). help.blueberryfunded.com serves the
+# identifying bot User-Agent a plain 200 (no challenge) and its robots.txt
+# allows this path for `User-agent: *` with no Crawl-delay.
+#
+# ROBOTS NOTE, deliberately recorded here: that robots.txt carries
+# `Disallow: /` for a list of named AI crawlers — ClaudeBot, GPTBot, CCBot,
+# Bytespider, Google-Extended, Amazonbot, Applebot-Extended, meta-externalagent
+# — plus `Content-Signal: ai-train=no`. This scraper is none of those: it
+# identifies as TradingCalendarBot, reads one page on a schedule, and trains
+# nothing. If that ever changes, or if Blueberry adds a rule naming this bot,
+# the fetcher will see it and refuse — RobotsPolicy checks both the full UA
+# string and the bare TradingCalendarBot token.
+#
+# SHAPE: one evergreen article listing the recurring crypto maintenance
+# windows. Their "Announcements" collection exists but carries product/policy
+# posts, not interruptions; this article is the page that actually schedules
+# downtime, so it is the page we watch.
+
+name = "blueberry-funded"
+display_name = "Blueberry Funded"
+url = "https://help.blueberryfunded.com/en/articles/15967669-when-is-crypto-trading-paused-for-scheduled-maintenance"
+
+listing_title_selector = "h1"
+listing_title_contains = "maintenance"
+listing_content_selectors = ["article"]
+
+link_selectors = []
+
+post_title_selector = "h1"
+post_content_selectors = ["article"]
+
+# Intercom nests "Related Articles" inside <article>; see topstep.toml.
+strip_selectors = ["section.related_articles"]
+
+min_content_chars = 300
+post_key_prefix = "blueberry-maintenance"
+
+# The article states each window in BOTH "BST" and "EDT" columns, e.g.
+# "18 July 2026 | BST 09:00-10:00 | EDT 04:00-05:00", and in prose:
+# "Pricing returns to normal once maintenance ends at 10:00 BST (05:00 EDT)."
+# BST is British Summer Time — Europe/London, which OBSERVES daylight saving
+# and becomes GMT in winter. Encoding a fixed +01:00 would put every window an
+# hour out from late October. The two stated columns agree
+# (09:00 BST == 04:00 EDT == 08:00 UTC), which is what confirms the reading.
+timezone = "Europe/London"
+
+keywords = ["maintenance", "crypto", "paused", "pricing"]
+
+prompt_hints = """
+This firm publishes recurring scheduled maintenance for crypto pricing.
+
+Times appear in a table with TWO timezone columns, "BST" and "EDT", giving the
+same window twice. Read the BST column and treat it as Europe/London (a
+daylight-saving zone that reads GMT in winter) — do not emit the same window
+twice, once per column, and do not treat "BST" or "EDT" as fixed offsets.
+
+ALWAYS set "stated_utc_offset" to null for this source. "BST" is UTC+01:00 only
+between late March and late October; the same article read in November means
+GMT (UTC+00:00). Leaving it null lets the pipeline resolve each date in
+Europe/London with the right offset for that date.
+
+Each row of the "Upcoming dates" table is one event on that Saturday: emit
+crypto_closure for the stated start and end. The window is one hour.
+
+The prose says the maintenance "runs every second Saturday" and ends with
+"..and every other Saturday thereafter" — do NOT invent additional dates from
+that sentence. Emit only the dates actually listed in the table; a recurrence
+described in words is not a schedule, and guessing forward is how a calendar
+acquires windows that never happen.
+
+Ignore: the "What to expect during the window" and "What this means for your
+trades" sections, which describe behaviour rather than scheduling anything.
+"""
+
+notes = """
+Evergreen page: Blueberry appends new dates and drops past ones, so post_key is
+stable while content_hash moves. Their site publishes no holiday or early-close
+schedules anywhere (all 141 sitemap URLs checked, 2026-08-17) — crypto
+maintenance is the whole of their scrapeable interruption coverage, and the
+profile is scoped honestly to that rather than pointed at a blog that has none.
+"""

@@ -1,0 +1,124 @@
+{
+  "_source": "https://help.topstep.com/en/articles/13350348-topstep-holiday-trading-hours",
+  "_recorded": "2026-08-17",
+  "_note": [
+    "Hand-derived from the recorded article text in listing.html and reviewed row by row",
+    "against Topstep's '2026 Holiday Schedule' table. Every date was checked against the",
+    "real calendar (Jan 1 2026 is a Thursday, Jul 3 2026 is the Friday before a Saturday",
+    "July 4th, Nov 26 2026 is the fourth Thursday, and so on) and every row matches.",
+    "",
+    "stated_utc_offset is null on purpose. The table says 'CT' and spans a full year, so",
+    "five of these thirteen rows fall in CDT (UTC-05:00) and eight in CST (UTC-06:00).",
+    "Pinning either number here would encode the exact bug this project exists to avoid;",
+    "null defers to the profile's America/Chicago zone, which resolves each date correctly.",
+    "",
+    "Juneteenth gives two cutoffs (SIM 11:45 CT, Live 11:10 CT). The earlier one is used so",
+    "the warning fires in time for both account types, and both are named in 'affected'."
+  ],
+  "events": [
+    {
+      "event_type": "holiday_closure",
+      "start_time": "2026-01-01T00:00:00",
+      "end_time": "2026-01-01T23:59:00",
+      "stated_utc_offset": null,
+      "affected": "New Year's Day — markets closed",
+      "confidence": "high"
+    },
+    {
+      "event_type": "early_close",
+      "start_time": "2026-01-19T11:45:00",
+      "end_time": "2026-01-19T23:59:00",
+      "stated_utc_offset": null,
+      "affected": "MLK Day — close positions by 11:45 CT",
+      "confidence": "high"
+    },
+    {
+      "event_type": "early_close",
+      "start_time": "2026-02-16T11:45:00",
+      "end_time": "2026-02-16T23:59:00",
+      "stated_utc_offset": null,
+      "affected": "Presidents' Day — close positions by 11:45 CT",
+      "confidence": "high"
+    },
+    {
+      "event_type": "early_close",
+      "start_time": "2026-04-03T08:00:00",
+      "end_time": "2026-04-03T23:59:00",
+      "stated_utc_offset": null,
+      "affected": "Good Friday — close positions by 08:00 CT",
+      "confidence": "high"
+    },
+    {
+      "event_type": "early_close",
+      "start_time": "2026-05-25T11:45:00",
+      "end_time": "2026-05-25T23:59:00",
+      "stated_utc_offset": null,
+      "affected": "Memorial Day — close positions by 11:45 CT",
+      "confidence": "high"
+    },
+    {
+      "event_type": "early_close",
+      "start_time": "2026-06-19T11:10:00",
+      "end_time": "2026-06-19T23:59:00",
+      "stated_utc_offset": null,
+      "affected": "Juneteenth — Live 11:10 CT, SIM 11:45 CT",
+      "confidence": "high"
+    },
+    {
+      "event_type": "early_close",
+      "start_time": "2026-07-03T11:45:00",
+      "end_time": "2026-07-03T23:59:00",
+      "stated_utc_offset": null,
+      "affected": "Independence Day — close positions by 11:45 CT",
+      "confidence": "high"
+    },
+    {
+      "event_type": "early_close",
+      "start_time": "2026-09-07T11:45:00",
+      "end_time": "2026-09-07T23:59:00",
+      "stated_utc_offset": null,
+      "affected": "Labor Day — close positions by 11:45 CT",
+      "confidence": "high"
+    },
+    {
+      "event_type": "early_close",
+      "start_time": "2026-11-26T11:45:00",
+      "end_time": "2026-11-26T23:59:00",
+      "stated_utc_offset": null,
+      "affected": "Thanksgiving — close positions by 11:45 CT",
+      "confidence": "high"
+    },
+    {
+      "event_type": "early_close",
+      "start_time": "2026-11-27T12:00:00",
+      "end_time": "2026-11-27T23:59:00",
+      "stated_utc_offset": null,
+      "affected": "Day After Thanksgiving — close positions by 12:00 CT",
+      "confidence": "high"
+    },
+    {
+      "event_type": "early_close",
+      "start_time": "2026-12-24T12:00:00",
+      "end_time": "2026-12-24T23:59:00",
+      "stated_utc_offset": null,
+      "affected": "Christmas Eve — close positions by 12:00 CT",
+      "confidence": "high"
+    },
+    {
+      "event_type": "holiday_closure",
+      "start_time": "2026-12-25T00:00:00",
+      "end_time": "2026-12-25T23:59:00",
+      "stated_utc_offset": null,
+      "affected": "Christmas Day — markets closed",
+      "confidence": "high"
+    },
+    {
+      "event_type": "holiday_closure",
+      "start_time": "2027-01-01T00:00:00",
+      "end_time": "2027-01-01T23:59:00",
+      "stated_utc_offset": null,
+      "affected": "New Year's Day — markets closed",
+      "confidence": "high"
+    }
+  ]
+}

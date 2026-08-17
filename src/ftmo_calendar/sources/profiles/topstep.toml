@@ -1,0 +1,86 @@
+# Topstep — https://help.topstep.com/en/articles/13350348-topstep-holiday-trading-hours
+#
+# Verified against the live page on 2026-08-17 (recorded in tests/fixtures/topstep/).
+# robots.txt (help.topstep.com) allows this path and asks for Crawl-delay: 1,
+# which the fetcher honours. The help subdomain serves the identifying bot
+# User-Agent a plain 200 — no challenge, nothing to work around.
+#
+# SHAPE: this is not an index of dated posts. Topstep maintains ONE evergreen
+# article carrying the whole year's holiday table, rewritten in place. So the
+# configured URL is both the "listing" and the post: listing_content_selectors
+# reads the article body, and there are no links to follow. Post identity comes
+# from the URL slug and stays constant across rewrites, which is exactly right
+# — a rewritten table is the same post with new content, and reconcile replaces
+# its events rather than duplicating them.
+
+name = "topstep"
+display_name = "Topstep"
+url = "https://help.topstep.com/en/articles/13350348-topstep-holiday-trading-hours"
+
+listing_title_selector = "h1"
+listing_title_contains = "holiday"
+listing_content_selectors = ["article"]
+
+# No older-post archive exists; following links would only wander into
+# unrelated help articles.
+link_selectors = []
+
+post_title_selector = "h1"
+post_content_selectors = ["article"]
+
+# Intercom nests the "Related Articles" strip INSIDE <article>, so no narrower
+# content selector exists. Those teaser headlines ("Topstep Payout Policy",
+# "Commissions and Fees") are unrelated prose that an extractor would happily
+# read as announcements; remove them rather than widen the selector.
+strip_selectors = ["section.related_articles"]
+
+min_content_chars = 400
+post_key_prefix = "topstep-holiday"
+
+# The article states every time as "CT" — "close by 11:45 CT for a 12:00 CT
+# close", "17:00 CT", "08:00 CT". US Central Time OBSERVES daylight saving, so
+# this must be the civil zone America/Chicago and NOT a fixed Etc/GMT+6: the
+# table spans a whole year, and half its rows fall in CDT (UTC-5) while the
+# other half fall in CST (UTC-6). A fixed offset would put every winter holiday
+# an hour out.
+timezone = "America/Chicago"
+
+keywords = ["holiday", "early close", "markets closed", "close positions", "maintenance"]
+
+prompt_hints = """
+This firm trades CME futures. Every time in the announcement is US Central Time
+("CT") — America/Chicago, which observes daylight saving; do not treat "CT" as
+a fixed offset.
+
+ALWAYS set "stated_utc_offset" to null for this source, even though the text
+names a zone. "CT" is UTC-06:00 in winter and UTC-05:00 in summer, and this
+table spans a whole year: writing either number would put half the rows an hour
+wrong. Leaving it null lets the pipeline resolve each date in America/Chicago
+with the right offset for that date.
+
+The core content is one table with the columns: Holiday | Date | Close Positions
+By | Reopen After.
+- "Markets closed" in the "Close Positions By" column means the whole trading
+  day is closed: emit holiday_closure for that date.
+- A time in the "Close Positions By" column (e.g. "11:45 CT") is the position
+  cutoff ahead of an early exchange close: emit early_close starting at that
+  time on that date.
+- Where a row gives separate SIM and Live cutoffs (Juneteenth: "SIM: 11:45 CT",
+  "Live: 11:10 CT"), emit the EARLIER time so the calendar warns in time for
+  both, and name both account types in the affected field.
+- The "Reopen After" column is the normal Sunday/holiday-evening session reopen
+  (usually 17:00 CT). That is a resumption, not an interruption: do not emit an
+  event for it on its own.
+
+Ignore entirely: the standing "CME Protocol" / blended-trade-date explanation,
+the daily-loss-limit discussion, the account-type comparison table, and the
+"Payouts are not available during holiday hours" note. None of these is a
+scheduled interruption with a date.
+"""
+
+notes = """
+Rolling evergreen page: Topstep edits the same article as the year advances, so
+content_hash changes while post_key does not. That is the intended poll-and-diff
+behaviour. There is no historical archive — past versions are unrecoverable, so
+a fixture can only ever pin the table as it stood when recorded.
+"""

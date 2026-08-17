@@ -1,0 +1,53 @@
+{
+  "_source": "https://help.blueberryfunded.com/en/articles/15967669-when-is-crypto-trading-paused-for-scheduled-maintenance",
+  "_recorded": "2026-08-17",
+  "_note": [
+    "Hand-derived from the recorded article text in listing.html. The 'Upcoming dates' table",
+    "lists exactly four windows; all four are here and nothing else is. Each listed date was",
+    "checked to be a Saturday (18 Jul, 1 Aug, 15 Aug, 29 Aug 2026 all are), matching the",
+    "article's 'every second Saturday' description.",
+    "",
+    "The article closes with '..and every other Saturday thereafter.' No events are invented",
+    "from that sentence: a recurrence described in prose is not a published schedule, and",
+    "extrapolating it forward is how a calendar acquires windows that never happen.",
+    "",
+    "stated_utc_offset is null on purpose. The table states 'BST', which is UTC+01:00 only",
+    "from late March to late October; the profile's Europe/London zone resolves each date",
+    "correctly, including after the October changeover. The article's own EDT column",
+    "corroborates the reading: 09:00 BST == 04:00 EDT == 08:00 UTC."
+  ],
+  "events": [
+    {
+      "event_type": "crypto_closure",
+      "start_time": "2026-07-18T09:00:00",
+      "end_time": "2026-07-18T10:00:00",
+      "stated_utc_offset": null,
+      "affected": "Crypto",
+      "confidence": "high"
+    },
+    {
+      "event_type": "crypto_closure",
+      "start_time": "2026-08-01T09:00:00",
+      "end_time": "2026-08-01T10:00:00",
+      "stated_utc_offset": null,
+      "affected": "Crypto",
+      "confidence": "high"
+    },
+    {
+      "event_type": "crypto_closure",
+      "start_time": "2026-08-15T09:00:00",
+      "end_time": "2026-08-15T10:00:00",
+      "stated_utc_offset": null,
+      "affected": "Crypto",
+      "confidence": "high"
+    },
+    {
+      "event_type": "crypto_closure",
+      "start_time": "2026-08-29T09:00:00",
+      "end_time": "2026-08-29T10:00:00",
+      "stated_utc_offset": null,
+      "affected": "Crypto",
+      "confidence": "high"
+    }
+  ]
+}
