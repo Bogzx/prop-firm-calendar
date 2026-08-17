@@ -15,6 +15,13 @@ from ftmo_calendar.state import State
 
 _MAX_PAST_ROWS = 6
 
+_SOURCE_STATES = {
+    "ok": "OPERATIONAL",
+    "error": "SYNC ERROR",
+    "stale": "GONE QUIET",
+    "anomaly": "NEEDS REVIEW",
+}
+
 
 def _humanize(seconds: float) -> str:
     """Compact age string: '4 min', '3 h', '12 d'."""
@@ -77,6 +84,7 @@ def render_page(state: State, snapshot: dict, stats: dict | None = None) -> byte
         "error": "SYNC ERROR",
         "stale": "SYNC STALE",
         "anomaly": "NEEDS REVIEW",
+        "degraded": "SOURCE DOWN",
     }.get(state_name, "OPERATIONAL" if ok else "SYNC ERROR")
     last_error = snapshot.get("last_error") or ""
     error_line = (
@@ -102,6 +110,39 @@ def render_page(state: State, snapshot: dict, stats: dict | None = None) -> byte
         f'<span class="srcline">source: {html.escape(str(source_name))} · '
         f"last successful sync {html.escape(freshness)}</span>"
     )
+
+    # Per-source health. A combined feed that reports one overall badge lets a
+    # firm whose scraper has gone quiet hide behind the healthy ones — and its
+    # subscribers are precisely the people who then get caught by an outage.
+    # Rendered only when there is more than one source, so a single-firm
+    # deployment's page is unchanged.
+    sources = snapshot.get("sources") or []
+    sources_section = ""
+    if len(sources) > 1:
+        cards = []
+        for entry in sources:
+            healthy = bool(entry.get("ok"))
+            cls = "ok" if healthy else "err"
+            label = _SOURCE_STATES.get(str(entry.get("status")), "OPERATIONAL")
+            age = entry.get("last_success_age_seconds")
+            if entry.get("last_success") is None:
+                when = "never synced"
+            elif isinstance(age, int | float):
+                when = f"{_humanize(float(age))} ago"
+            else:
+                when = "unknown"
+            detail = entry.get("last_error") or "; ".join(entry.get("anomalies") or [])
+            detail_html = (
+                f'<span class="srcnote">{html.escape(str(detail)[:200])}</span>' if detail else ""
+            )
+            cards.append(
+                f'<div class="src {cls}"><span class="dot"></span>'
+                f"<b>{html.escape(str(entry.get('display_name') or entry.get('firm')))}</b>"
+                f"<span>{label} · {html.escape(when)}</span>{detail_html}</div>"
+            )
+        sources_section = (
+            f'<section><h2>SOURCES</h2><div class="srcgrid">{"".join(cards)}</div></section>'
+        )
 
     def iso_or_dash(key: str) -> str:
         value = snapshot.get(key)
@@ -209,6 +250,16 @@ button:hover, .btn:hover {{ filter:brightness(1.15); }}
 .app b {{ color:var(--txt); display:block; margin-bottom:4px; letter-spacing:.08em; }}
 .app span {{ color:var(--dim); font-family:var(--serif); font-size:13px; }}
 
+.srcgrid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:10px; }}
+.src {{ border:1px solid var(--line-soft); background:var(--panel); padding:13px 15px;
+  font-size:12px; display:grid; grid-template-columns:auto 1fr; gap:3px 9px; align-items:baseline; }}
+.src .dot {{ grid-row:1/3; align-self:center; }}
+.src b {{ color:var(--txt); letter-spacing:.08em; }}
+.src span {{ color:var(--dim); font-size:11px; letter-spacing:.1em; }}
+.src.err b {{ color:var(--red); }}
+.src .srcnote {{ grid-column:2; color:var(--faint); font-family:var(--serif); font-style:italic;
+  letter-spacing:0; font-size:12px; }}
+
 table {{ width:100%; border-collapse:collapse; font-size:13px; animation:rise .6s .2s ease both; }}
 th {{ text-align:left; color:var(--faint); font-weight:400; font-size:11px; letter-spacing:.2em;
      padding:0 12px 10px; border-bottom:1px solid var(--line); }}
@@ -284,6 +335,8 @@ footer a:hover {{ color:var(--amber); }}
       <span>Add calendar → Subscribe from web → paste the URL.</span></div>
   </div>
 </section>
+
+{sources_section}
 
 <section>
   <h2>SCHEDULE</h2>

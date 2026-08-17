@@ -49,6 +49,50 @@ def _utcnow() -> datetime:
 
 
 @dataclass
+class FirmStatus:
+    """Per-firm health, tracked separately so no firm can hide behind the others.
+
+    A combined feed averages ten firms into one badge, and an averaged badge is
+    exactly how a source that quietly stopped publishing stays unnoticed for
+    weeks. Each firm therefore carries its own last-success stamp, error and
+    anomalies, and is judged stale on the same rule the whole server is.
+    """
+
+    name: str
+    display_name: str
+    last_success: str | None = None
+    last_error: str | None = None
+    anomalies: tuple[str, ...] = ()
+    runs_ok: int = 0
+    runs_failed: int = 0
+
+    def snapshot(self, now: datetime, stale_after: float, fallback: str | None) -> dict:
+        since = _age(now, self.last_success or fallback)
+        age = _age(now, self.last_success) if self.last_success else None
+        stale = bool(stale_after and since is not None and since > stale_after)
+        ok = self.last_error is None and not stale and not self.anomalies
+        return {
+            "firm": self.name,
+            "display_name": self.display_name,
+            "ok": ok,
+            "status": "error"
+            if self.last_error
+            else "stale"
+            if stale
+            else "anomaly"
+            if self.anomalies
+            else "ok",
+            "last_success": self.last_success,
+            "last_success_age_seconds": None if age is None else round(age, 1),
+            "stale": stale,
+            "last_error": self.last_error,
+            "anomalies": list(self.anomalies),
+            "runs_ok": self.runs_ok,
+            "runs_failed": self.runs_failed,
+        }
+
+
+@dataclass
 class ServerStatus:
     """Thread-safe record of how the background sync is doing.
 
@@ -56,6 +100,10 @@ class ServerStatus:
     stopped running weeks ago, or one that ran but reported an anomaly, leaves
     subscribers with a silently frozen calendar. Both make `ok` false so the
     documented `/healthz` monitor and the status badge notice.
+
+    With several firms configured it is also more than "the run finished": any
+    single unhealthy firm makes the whole snapshot unhealthy, because the
+    alternative is a green light over a feed that has silently lost a source.
     """
 
     started_at: str
@@ -67,11 +115,15 @@ class ServerStatus:
     runs_ok: int = 0
     runs_failed: int = 0
     anomalies: tuple[str, ...] = ()
+    firms: dict[str, FirmStatus] = field(default_factory=dict)
     clock: Callable[[], datetime] = _utcnow
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def record_success(
-        self, now: datetime | None = None, anomalies: Sequence[str] | None = None
+        self,
+        now: datetime | None = None,
+        anomalies: Sequence[str] | None = None,
+        firms: Sequence[object] | None = None,
     ) -> None:
         with self._lock:
             stamp = (now or self.clock()).isoformat()
@@ -80,6 +132,29 @@ class ServerStatus:
             self.last_error = None
             self.anomalies = tuple(anomalies or ())
             self.runs_ok += 1
+            for outcome in firms or ():
+                self._record_firm(outcome, stamp)
+
+    def _record_firm(self, outcome: object, stamp: str) -> None:
+        """Fold one firms.FirmOutcome into its FirmStatus (duck-typed to avoid a cycle)."""
+        name = str(getattr(outcome, "name", "") or "")
+        if not name:
+            return
+        entry = self.firms.get(name)
+        if entry is None:
+            entry = FirmStatus(name=name, display_name=str(getattr(outcome, "display_name", name)))
+            self.firms[name] = entry
+        entry.display_name = str(getattr(outcome, "display_name", name)) or name
+        error = getattr(outcome, "error", None)
+        entry.anomalies = tuple(getattr(outcome, "anomalies", ()) or ())
+        entry.last_error = str(error) if error else None
+        if error:
+            entry.runs_failed += 1
+        else:
+            # Only a firm that actually completed gets its freshness stamp
+            # renewed; otherwise a failing firm rides on the loop's success.
+            entry.last_success = stamp
+            entry.runs_ok += 1
 
     def record_failure(self, error: BaseException, now: datetime | None = None) -> None:
         with self._lock:
@@ -114,17 +189,29 @@ class ServerStatus:
             stale = bool(
                 self.interval_seconds and since is not None and since > self.stale_after_seconds
             )
-            ok = self.last_error is None and not stale and not self.anomalies
-            return {
-                "ok": ok,
-                "status": "error"
+            sources = [
+                f.snapshot(now, self.stale_after_seconds, self.started_at)
+                for f in self.firms.values()
+            ]
+            unhealthy = [s["display_name"] for s in sources if not s["ok"]]
+            ok = self.last_error is None and not stale and not self.anomalies and not unhealthy
+            status = (
+                "error"
                 if self.last_error
                 else "stale"
                 if stale
                 else "anomaly"
                 if self.anomalies
-                else "ok",
+                else "degraded"
+                if unhealthy
+                else "ok"
+            )
+            return {
+                "ok": ok,
+                "status": status,
                 "source": self.source,
+                "sources": sources,
+                "unhealthy_sources": unhealthy,
                 "started_at": self.started_at,
                 "last_run": self.last_run,
                 "last_success": self.last_success,
@@ -153,8 +240,13 @@ def _age(now: datetime, stamp: str | None) -> float | None:
         return None
 
 
+#: What a sync may hand back: the original anomaly sequence, or any object
+#: exposing `.anomalies` and `.outcomes` (firms.MultiRunReport does both).
+SyncResult = Sequence[str] | object | None
+
+
 def run_sync_loop(
-    sync_fn: Callable[[], Sequence[str] | None],
+    sync_fn: Callable[[], SyncResult],
     interval_seconds: float,
     stop: threading.Event,
     status: ServerStatus,
@@ -175,8 +267,15 @@ def run_sync_loop(
     last_notified_error: str | None = None
     while not stop.is_set():
         try:
-            anomalies = sync_fn()
-            status.record_success(anomalies=anomalies)
+            result = sync_fn()
+            # A caller may hand back either a plain anomaly sequence (the
+            # original contract, still honoured) or a run report carrying
+            # per-firm outcomes. Duck-typed rather than imported, so server.py
+            # keeps no dependency on the pipeline.
+            firms = getattr(result, "outcomes", None)
+            raw = getattr(result, "anomalies", result)
+            anomalies = list(raw) if isinstance(raw, Sequence) else None
+            status.record_success(anomalies=anomalies, firms=firms)
             last_notified_error = None
         except Exception as e:  # noqa: BLE001 - loop must survive any sync failure
             logger.exception("Scheduled sync failed")
@@ -191,23 +290,42 @@ def run_sync_loop(
             break
 
 
+@dataclass(frozen=True)
+class FeedSelection:
+    """What a `/feed.ics` request asked for. `None` on an axis means "no filter".
+
+    Kept as one value rather than two parameters so the renderer signature, the
+    cache key and the query parsing cannot drift apart — and so that adding a
+    third filter later does not touch three call sites again.
+    """
+
+    types: frozenset[str] | None = None
+    firms: frozenset[str] | None = None
+
+    @property
+    def unfiltered(self) -> bool:
+        return self.types is None and self.firms is None
+
+
 def make_handler(
     ics_path: Path,
     state_path: Path,
     status: ServerStatus,
-    feed_renderer: Callable[[frozenset[str]], bytes] | None = None,
+    feed_renderer: Callable[[FeedSelection], bytes] | None = None,
     stats: StatsStore | None = None,
+    valid_firms: Sequence[str] | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     from ftmo_calendar.models import EventType
 
     valid_types = {t.value for t in EventType}
+    known_firms = set(valid_firms or ())
 
     # Rendering a filtered feed re-reads the state file and regenerates the
     # whole calendar including the VTIMEZONE bisection. The unfiltered feed is
     # already served from a file on disk; give the filtered variants the same
     # treatment by caching per type-set, invalidated by the state file's mtime
     # and size so a completed sync is picked up on the next request.
-    filtered_cache: dict[frozenset[str], tuple[tuple[float, int], bytes]] = {}
+    filtered_cache: dict[FeedSelection, tuple[tuple[float, int], bytes]] = {}
     cache_lock = threading.Lock()
 
     def _state_version() -> tuple[float, int]:
@@ -217,7 +335,7 @@ def make_handler(
             return (0.0, 0)
         return (stat.st_mtime, stat.st_size)
 
-    def render_filtered(requested: frozenset[str]) -> bytes:
+    def render_filtered(requested: FeedSelection) -> bytes:
         assert feed_renderer is not None
         version = _state_version()
         with cache_lock:
@@ -269,23 +387,40 @@ def make_handler(
         def _json(self, code: int, payload: dict) -> None:
             self._respond(code, "application/json; charset=utf-8", json.dumps(payload).encode())
 
+        def _parse_filter(
+            self, raw: str, valid: set[str], label: str
+        ) -> frozenset[str] | None | dict:
+            """frozenset for a usable filter, None when absent, or an error payload."""
+            if not raw:
+                return None
+            requested = frozenset(v.strip() for v in raw.split(",") if v.strip())
+            unknown = requested - valid
+            if unknown or not requested:
+                return {
+                    "error": f"unknown {label}: {sorted(unknown)}",
+                    "valid": sorted(valid),
+                }
+            return requested
+
         def _serve_feed(self) -> None:
             query = parse_qs(urlparse(self.path).query)
             types_param = query.get("types", [""])[0]
-            if types_param and feed_renderer is not None:
-                requested = frozenset(t.strip() for t in types_param.split(",") if t.strip())
-                unknown = requested - valid_types
-                if unknown or not requested:
-                    self._json(
-                        400,
-                        {
-                            "error": f"unknown types: {sorted(unknown)}",
-                            "valid": sorted(valid_types),
-                        },
-                    )
+            firms_param = query.get("firms", [""])[0]
+            if (types_param or firms_param) and feed_renderer is not None:
+                types = self._parse_filter(types_param, valid_types, "types")
+                if isinstance(types, dict):
+                    self._json(400, types)
                     return
-                self._respond(200, "text/calendar; charset=utf-8", render_filtered(requested))
+                firms = self._parse_filter(firms_param, known_firms, "firms")
+                if isinstance(firms, dict):
+                    self._json(400, firms)
+                    return
+                selection = FeedSelection(types=types, firms=firms)
+                self._respond(200, "text/calendar; charset=utf-8", render_filtered(selection))
                 return
+            # No filter: serve the file on disk, exactly as before. This is the
+            # URL real subscribers already have, and it must keep returning the
+            # same bytes for the same state.
             if not ics_path.exists():
                 self._json(404, {"error": "feed not generated yet"})
                 return
@@ -364,11 +499,12 @@ def serve_forever(
     interval_seconds: float,
     ics_path: Path,
     state_path: Path,
-    sync_fn: Callable[[], Sequence[str] | None],
+    sync_fn: Callable[[], SyncResult],
     on_error: Callable[[BaseException], None] | None = None,
-    feed_renderer: Callable[[frozenset[str]], bytes] | None = None,
+    feed_renderer: Callable[[FeedSelection], bytes] | None = None,
     stats: StatsStore | None = None,
     source_name: str = "FTMO",
+    valid_firms: Sequence[str] | None = None,
 ) -> int:
     check_writable(state_path.parent)
     status = ServerStatus(
@@ -385,7 +521,8 @@ def serve_forever(
     )
     loop_thread.start()
     httpd = ThreadingHTTPServer(
-        (host, port), make_handler(ics_path, state_path, status, feed_renderer, stats)
+        (host, port),
+        make_handler(ics_path, state_path, status, feed_renderer, stats, valid_firms),
     )
     logger.info(
         "Serving on http://%s:%d (feed: /feed.ics, status: /status); sync every %.0f min",

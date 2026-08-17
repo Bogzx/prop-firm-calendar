@@ -15,7 +15,7 @@ Greenwich and broke on naive parsers that drop the Z suffix.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -117,6 +117,24 @@ def _vtimezone_lines(tz: ZoneInfo, first: datetime, last: datetime) -> list[str]
     return lines
 
 
+def calendar_name(firm_names: list[str], firm_titles: Mapping[str, str] | None = None) -> str:
+    """Name the calendar after what is actually in it.
+
+    A feed carrying one firm keeps that firm's name — which is what makes the
+    unfiltered feed of an FTMO-only deployment come out byte-identical to the
+    one people are already subscribed to. A feed carrying several must not go
+    on calling itself after one of them: a subscriber whose app shows "FTMO
+    Trading Updates" while the feed also contains Topstep closures has been
+    silently misinformed, which is worse than an unfamiliar name.
+    """
+    titles = firm_titles or {}
+    if len(firm_names) == 1:
+        return f"{titles.get(firm_names[0], firm_names[0].upper())} Trading Updates"
+    if len(firm_names) > 1:
+        return "Prop Firm Trading Updates"
+    return "FTMO Trading Updates"  # empty feed: keep the historical name
+
+
 def render_ics(
     state: State,
     reminders_minutes: tuple[int, ...],
@@ -124,21 +142,39 @@ def render_ics(
     source_url: str = "",
     refresh_minutes: int = 0,
     types: frozenset[str] | None = None,
+    firms: frozenset[str] | None = None,
+    default_firm: str = "",
+    firm_titles: Mapping[str, str] | None = None,
     tz_name: str = "UTC",
     now: datetime | None = None,
 ) -> str:
-    """Render the feed; `types` (EventType values) limits it to those kinds of events."""
+    """Render the feed.
+
+    `types` (EventType values) and `firms` (source-profile names) each limit
+    what is included; `None` means "no filter on this axis", which is what the
+    long-standing unfiltered feed passes and why its output is unchanged.
+
+    `default_firm` attributes state entries written before per-firm tracking —
+    see State.firm_of. Without it, upgrading would drop every existing event
+    out of every per-firm feed until it happened to be re-scraped.
+    """
     now = now or datetime.now(UTC)
     tz = ZoneInfo(tz_name)
     dtstamp = now.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
 
     selected: list[tuple[TrackedEvent, datetime, datetime]] = []
+    present: list[str] = []
     for post in state.posts.values():
+        firm = state.firm_of(post, default_firm)
+        if firms is not None and firm not in firms:
+            continue
         for event in post.events:
             if not event.summary or not event.start:
                 continue  # pre-v2 state entry without display data
             if types is not None and event.event_type not in types:
                 continue
+            if firm and firm not in present:
+                present.append(firm)
             selected.append(
                 (event, datetime.fromisoformat(event.start), datetime.fromisoformat(event.end))
             )
@@ -149,7 +185,13 @@ def render_ics(
             tz, min(s for _, s, _ in selected), max(e for _, _, e in selected)
         )
 
-    name = "FTMO Trading Updates"
+    # Name after what was ASKED for when a firm filter is present, not after
+    # what happened to match: `?firms=e8-markets` returning nothing this week is
+    # still an E8 Markets feed, and must not inherit another firm's name. With
+    # no filter, name after what is in the feed, falling back to the configured
+    # firms so an empty feed is still labelled correctly.
+    named = sorted(firms) if firms is not None else (sorted(present) or sorted(firm_titles or {}))
+    name = calendar_name(named, firm_titles)
     if types is not None:
         name += f" ({', '.join(sorted(types))})"
     lines = [
@@ -205,6 +247,8 @@ def write_ics(
     *,
     source_url: str = "",
     refresh_minutes: int = 0,
+    default_firm: str = "",
+    firm_titles: Mapping[str, str] | None = None,
     tz_name: str = "UTC",
     now: datetime | None = None,
 ) -> None:
@@ -213,6 +257,8 @@ def write_ics(
         reminders_minutes,
         source_url=source_url,
         refresh_minutes=refresh_minutes,
+        default_firm=default_firm,
+        firm_titles=firm_titles,
         tz_name=tz_name,
         now=now,
     )

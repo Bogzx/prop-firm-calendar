@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 
 from ftmo_calendar import __version__
 from ftmo_calendar.config import AppConfig, ConfigError, load_config
+from ftmo_calendar.firms import MultiRunReport
 from ftmo_calendar.notify.base import (
     EventPayload,
     Notifier,
@@ -131,6 +132,29 @@ def _build_sink(config: AppConfig, dry_run: bool):  # noqa: ANN202
     return GoogleCalendarSink(credentials, config.calendar)
 
 
+def _firm_titles(config: AppConfig) -> dict[str, str]:
+    """profile name -> display name, for naming feeds and the status page."""
+    from ftmo_calendar.sources.profile import load_profile
+
+    titles: dict[str, str] = {}
+    for firm in config.firms:
+        try:
+            profile = load_profile(firm.profile)
+        except ConfigError:  # pragma: no cover - load_config already validated
+            continue
+        titles[profile.name] = profile.display_name
+    return titles
+
+
+def _default_firm(config: AppConfig) -> str:
+    """Which firm owns state entries written before per-firm tracking.
+
+    The first configured firm, because that is exactly what the single
+    `[source]` scraper was when those entries were written. See State.firm_of.
+    """
+    return config.firms[0].profile if config.firms else ""
+
+
 def _write_feed(config: AppConfig, state: State) -> None:
     from ftmo_calendar.sinks.ics import write_ics
 
@@ -140,59 +164,66 @@ def _write_feed(config: AppConfig, state: State) -> None:
         config.calendar.reminders_minutes,
         source_url=config.source.url,
         refresh_minutes=config.serve.sync_interval_minutes,
+        default_firm=_default_firm(config),
+        firm_titles=_firm_titles(config),
         tz_name=config.calendar.timezone,
     )
 
 
-def _run_sync(config: AppConfig, dry_run: bool) -> RunReport:
-    """One full sync. Returns the report so callers can react to anomalies."""
+def _run_sync(config: AppConfig, dry_run: bool) -> MultiRunReport:
+    """One full sync across every configured firm.
+
+    Returns the multi-firm report so callers can react to anomalies and expose
+    per-firm health. With a single firm configured — which is what a config
+    predating `[[firms]]` produces — this is the previous behaviour: one
+    pipeline run, and a scrape failure still propagates out of here.
+    """
+    from ftmo_calendar.firms import run_firms
     from ftmo_calendar.parsing.factory import make_backend
     from ftmo_calendar.parsing.llm import EventExtractor
-    from ftmo_calendar.pipeline import run_pipeline
-    from ftmo_calendar.sources.factory import make_source, resolve_source_settings
     from ftmo_calendar.state import load_state, save_state
 
     if not config.calendar.enabled:
         # Without Google, the ICS feed is the only output — force it on.
         config = dataclasses.replace(config, ics=dataclasses.replace(config.ics, enabled=True))
 
-    # The source profile supplies the firm's timezone, keyword gate and prompt
-    # hints; anything the user set explicitly in [source] still wins.
-    profile, timezone, keywords = resolve_source_settings(config.source)
-    config = dataclasses.replace(
-        config,
-        source=dataclasses.replace(config.source, timezone=timezone, keywords=keywords),
-    )
+    backend = make_backend(config.llm)
 
-    source = make_source(config.source)
-    extractor = EventExtractor(
-        make_backend(config.llm),
-        config.llm.models,
-        consensus_runs=config.llm.consensus_runs,
-        prompt_hints=profile.prompt_hints,
-    )
+    def make_extractor(resolved) -> EventExtractor:  # noqa: ANN001 - ResolvedFirm
+        # Prompt hints are per firm: house vocabulary and the boilerplate that
+        # firm repeats in every post.
+        return EventExtractor(
+            backend,
+            config.llm.models,
+            consensus_runs=config.llm.consensus_runs,
+            prompt_hints=resolved.profile.prompt_hints,
+        )
+
     sink = _build_sink(config, dry_run)
     state = load_state(config.state_path)
 
-    report = run_pipeline(
-        source=source,
-        extractor=extractor,
+    result = run_firms(
+        config=config,
         sink=sink,
         state=state,
-        config=config,
+        make_extractor=make_extractor,
         dry_run=dry_run,
     )
+    totals = result.totals()
     if not dry_run:
-        _notify_run_outcome(config, make_notifiers(config.notify), report, state)
+        _notify_run_outcome(config, make_notifiers(config.notify), totals, state)
         save_state(state, config.state_path)
         if config.ics.enabled:
             _write_feed(config, state)
-    print(report.summary())
-    return report
+    for report in result.reports:
+        print(report.summary())
+    if len(result.reports) != 1:
+        print(totals.summary())
+    return result
 
 
 def _cmd_run(config: AppConfig, dry_run: bool) -> int:
-    report = _run_sync(config, dry_run)
+    report = _run_sync(config, dry_run).totals()
     # An anomaly means the run "succeeded" while producing a result we do not
     # believe. Exiting non-zero is what makes cron, systemd and the README's
     # documented exit codes able to notice it.
@@ -218,7 +249,7 @@ def _cmd_auth(config: AppConfig, check: bool) -> int:
 
 
 def _cmd_serve(config: AppConfig, port_override: int | None) -> int:
-    from ftmo_calendar.server import check_writable, serve_forever
+    from ftmo_calendar.server import FeedSelection, check_writable, serve_forever
 
     # Before anything else: if the data directory is not writable, nothing this
     # process does will ever be saved. Say so now, not after hours of a
@@ -236,12 +267,16 @@ def _cmd_serve(config: AppConfig, port_override: int | None) -> int:
     if existing_state.posts:
         _write_feed(config, existing_state)
 
-    def sync() -> list[str]:
-        # Anomalies travel back to ServerStatus so /healthz turns 503 and the
-        # status page stops claiming OPERATIONAL.
-        return _run_sync(config, dry_run=False).anomalies
+    def sync() -> MultiRunReport:
+        # The whole report travels back to ServerStatus: anomalies turn
+        # /healthz 503, and the per-firm outcomes keep each source's health
+        # individually visible instead of averaged into one badge.
+        return _run_sync(config, dry_run=False)
 
-    def feed_renderer(types: frozenset[str]) -> bytes:
+    titles = _firm_titles(config)
+    default_firm = _default_firm(config)
+
+    def feed_renderer(selection: FeedSelection) -> bytes:
         from ftmo_calendar.sinks.ics import render_ics
         from ftmo_calendar.state import load_state
 
@@ -250,13 +285,16 @@ def _cmd_serve(config: AppConfig, port_override: int | None) -> int:
             config.calendar.reminders_minutes,
             source_url=config.source.url,
             refresh_minutes=config.serve.sync_interval_minutes,
-            types=types,
+            types=selection.types,
+            firms=selection.firms,
+            default_firm=default_firm,
+            firm_titles=titles,
             tz_name=config.calendar.timezone,
         ).encode("utf-8")
 
-    from ftmo_calendar.sources.profile import load_profile
     from ftmo_calendar.stats import StatsStore
 
+    names = [f.profile for f in config.enabled_firms]
     return serve_forever(
         host=config.serve.host,
         port=port_override or config.serve.port,
@@ -267,7 +305,8 @@ def _cmd_serve(config: AppConfig, port_override: int | None) -> int:
         on_error=lambda e: _notify_failure(config, "run", e),
         feed_renderer=feed_renderer,
         stats=StatsStore(config.base_dir / "stats.json"),
-        source_name=load_profile(config.source.profile).display_name,
+        source_name=", ".join(titles.get(n, n) for n in names) or "FTMO",
+        valid_firms=names,
     )
 
 

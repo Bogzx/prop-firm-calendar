@@ -12,6 +12,7 @@ from ftmo_calendar.config import (
     NotifyConfig,
     SourceConfig,
 )
+from ftmo_calendar.firms import FirmOutcome, MultiRunReport
 from ftmo_calendar.pipeline import RunReport
 from ftmo_calendar.state import State
 
@@ -155,14 +156,31 @@ def test_anomaly_notification_can_be_turned_off(tmp_path: Path) -> None:
     assert recorder.sent == []
 
 
+def _sync_result(report: RunReport) -> MultiRunReport:
+    """Wrap one firm's report the way _run_sync now returns it."""
+    return MultiRunReport(
+        reports=[report],
+        outcomes=[
+            FirmOutcome(
+                name="ftmo",
+                display_name="FTMO",
+                ok=not report.anomalies,
+                anomalies=tuple(report.anomalies),
+            )
+        ],
+    )
+
+
 def test_run_exits_nonzero_on_anomaly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Exit codes are the documented contract for cron and systemd."""
-    monkeypatch.setattr(cli, "_run_sync", lambda config, dry_run: anomaly_report())
+    monkeypatch.setattr(cli, "_run_sync", lambda config, dry_run: _sync_result(anomaly_report()))
     assert cli.main(["--config", str(tmp_path / "config.toml")]) == cli.EXIT_ERROR
 
 
 def test_run_exits_zero_on_a_clean_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        cli, "_run_sync", lambda config, dry_run: RunReport(posts_seen=4, posts_relevant=4)
+        cli,
+        "_run_sync",
+        lambda config, dry_run: _sync_result(RunReport(posts_seen=4, posts_relevant=4)),
     )
     assert cli.main(["--config", str(tmp_path / "config.toml")]) == cli.EXIT_OK

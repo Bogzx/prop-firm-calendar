@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from ftmo_calendar.server import ServerStatus, make_handler, run_sync_loop
+from ftmo_calendar.server import FeedSelection, ServerStatus, make_handler, run_sync_loop
 from ftmo_calendar.sinks.ics import write_ics
 from ftmo_calendar.state import PostState, State, TrackedEvent, save_state
 
@@ -55,14 +55,20 @@ def server(tmp_path: Path):
     # without one every fixture-dated run would read as weeks stale.
     status = ServerStatus(started_at=NOW.isoformat(), interval_seconds=3600, clock=lambda: NOW)
 
-    renders: list[frozenset[str]] = []
+    renders: list[frozenset[str] | None] = []
 
-    def feed_renderer(types: frozenset[str]) -> bytes:
+    def feed_renderer(selection: FeedSelection) -> bytes:
         from ftmo_calendar.sinks.ics import render_ics
         from ftmo_calendar.state import load_state
 
-        renders.append(types)
-        return render_ics(load_state(state_path), (60,), types=types, now=NOW).encode("utf-8")
+        renders.append(selection.types)
+        return render_ics(
+            load_state(state_path),
+            (60,),
+            types=selection.types,
+            firms=selection.firms,
+            now=NOW,
+        ).encode("utf-8")
 
     from ftmo_calendar.stats import StatsStore
 
