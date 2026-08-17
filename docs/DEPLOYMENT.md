@@ -220,9 +220,34 @@ enough — no keyword matching needed. The JSON body carries the detail:
 }
 ```
 
+With several firms configured it also returns **503** when any single firm is
+unhealthy, with `"status": "degraded"`, the offending firms in
+`unhealthy_sources`, and a per-firm breakdown in `sources`:
+
+```json
+{
+  "ok": false,
+  "status": "degraded",
+  "unhealthy_sources": ["Topstep"],
+  "sources": [
+    {"firm": "ftmo", "display_name": "FTMO", "ok": true,
+     "status": "ok", "last_success_age_seconds": 1204, "stale": false},
+    {"firm": "topstep", "display_name": "Topstep", "ok": false,
+     "status": "stale", "last_success_age_seconds": 91500, "stale": true,
+     "last_error": "could not fetch https://help.topstep.com/… after 3 attempts"}
+  ]
+}
+```
+
+That is deliberate: a source which has quietly stopped publishing must move the
+status code, because averaged into an overall green it stays unnoticed until
+someone gets caught by an outage. One firm failing does not stop the others
+syncing — the feed keeps updating for every healthy source while the monitor
+tells you which one needs attention.
+
 Everything stateful lives in `./data` (`state.json`, `stats.json`, the feed)
 and in `.env` — back those up and the deployment is fully reproducible.
 
 The container restarts itself (`restart: unless-stopped`) and has a Docker
-healthcheck; a failing FTMO sync never takes the feed down, and if you set the
+healthcheck; a failing sync never takes the feed down, and if you set the
 Discord webhook you'll hear about every change and every failure.

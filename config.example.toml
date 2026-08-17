@@ -1,6 +1,57 @@
 # AutoFtmoCalendar configuration. Every key is optional — these are the defaults.
 # Copy to config.toml and edit. Secrets do NOT go here; put them in .env.
 
+# ---------------------------------------------------------------------------
+# WHICH FIRMS TO TRACK
+# ---------------------------------------------------------------------------
+# Uncomment the [[firms]] block below to track several prop firms at once. Each
+# entry names a profile in src/ftmo_calendar/sources/profiles/ (or a path to
+# your own .toml). Everything else is optional: leave a firm's timezone and
+# keywords unset and its profile decides, which is what makes adding a firm a
+# config change rather than a code change.
+#
+# Leave [[firms]] out entirely and the [source] section below is used as the one
+# and only firm — that is the pre-multi-firm behaviour, unchanged.
+#
+# Shipped profiles, each verified against the live site with a recorded fixture
+# and a golden test:
+#   ftmo             FTMO              — daily trading updates, fixed GMT+3
+#   topstep          Topstep           — CME holiday table, America/Chicago
+#   blueberry-funded Blueberry Funded  — crypto maintenance, Europe/London
+#   e8-markets       E8 Markets        — monthly schedule; offset read per row
+#
+# [[firms]]
+# profile = "ftmo"
+#
+# [[firms]]
+# profile = "topstep"
+#
+# [[firms]]
+# profile = "blueberry-funded"
+#
+# [[firms]]
+# profile = "e8-markets"
+# enabled = true                # set false to park a firm without deleting it
+# # url / timezone / keywords / max_posts / max_age_days override the profile.
+
+[scrape]
+# Being a good guest on a dozen other companies' servers.
+min_request_interval_seconds = 2.0  # floor between two requests to one host
+stagger_seconds = 5.0               # random delay before each firm's first
+                                    # request, so firms sharing a sync interval
+                                    # do not all fire on the same second
+obey_robots = true                  # ask robots.txt and believe the answer. A
+                                    # disallowed URL is refused outright, loudly.
+                                    # Only turn this off to scrape your OWN site.
+user_agent = ""                     # blank = the identifying default,
+                                    # "…(compatible; TradingCalendarBot/1.0;
+                                    # +https://github.com/Bogzx/ftmo-calendar)".
+                                    # Keep a contact URL in whatever you set.
+
+# ---------------------------------------------------------------------------
+# SINGLE-FIRM SETTINGS (used when [[firms]] is absent)
+# ---------------------------------------------------------------------------
+
 [source]
 profile = "ftmo"                # which prop firm: a TOML file in
                                 # src/ftmo_calendar/sources/profiles/, or a path

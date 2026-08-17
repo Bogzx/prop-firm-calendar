@@ -58,12 +58,39 @@ A source is a TOML profile plus a fixture; no Python module is needed.
 3. Record fixtures: `python scripts/record_fixtures.py --profile <name>`.
 4. Add parse tests against them (see `tests/test_source_profile.py` for a firm
    defined entirely in configuration).
+5. Add a golden test pinning that firm's real announcement text to its expected
+   event set (see `tests/test_golden_topstep.py`).
 
 Prefer selectors anchored on a class that names the content (`div.post-body`)
 over bare tags (`article`). A bare tag also matches teaser cards and navigation,
 and a wrong container is worse than no container: the LLM extracts from it
 regardless and produces plausible, wrong calendar entries instead of an error.
-`min_content_chars` is the backstop — keep it meaningful.
+`min_content_chars` is the backstop — keep it meaningful. Where a teaser strip
+is nested *inside* the only available container — Intercom help centres put
+"Related Articles" inside `<article>` — remove it with `strip_selectors` rather
+than widening the content selector.
+
+### The bar for shipping a firm
+
+A profile that has never been run against the live site is a guess with a
+filename. Before a firm merges:
+
+- **The fixture is recorded, not written.** `scripts/record_fixtures.py` output,
+  from the real page.
+- **The extraction has been read by a human.** Run the pipeline against the real
+  post and check the resulting dates, times, offsets and event types yourself.
+- **The timezone is established, not assumed.** Find what the firm actually
+  states and quote it in the profile. Decide explicitly whether it is a fixed
+  offset or a DST-observing zone — this is the project's core failure mode, and
+  a plausible-looking wrong zone is worse than no firm at all. If the firm's
+  clock matches no IANA zone, set `require_stated_offset = true` so the
+  announcement must supply its own offset and anything else is rejected.
+- **`post_key_prefix` is unique and stable.** Post keys share one namespace
+  across firms, and changing a prefix after deployment orphans every event.
+- **robots.txt allows it.** If it does not, the firm does not ship.
+
+If you can only properly verify one firm, ship one. One verified beats five
+guessed.
 
 ## Golden tests
 

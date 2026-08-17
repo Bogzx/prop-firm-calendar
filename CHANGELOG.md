@@ -1,5 +1,74 @@
 # Changelog
 
+## Unreleased — multi-firm
+
+It is no longer an FTMO tool. Three more prop firms ship, each verified against
+its live site, and the feed can be sliced per firm.
+
+Nothing an existing subscriber has changes. `event_key` — the identity Google
+Calendar reconciliation depends on — is computed exactly as before, and the
+unfiltered `/feed.ics` renders byte-identically from the same state (checked by
+running the previous revision against the same fixture and diffing: the whole
+ICS SHA-256 matches; pinned in `tests/test_ftmo_compatibility.py`).
+
+### Added — more firms
+- **Topstep** (`topstep`) — the full-year CME holiday table. Times are stated in
+  `CT`, so the profile uses `America/Chicago`: the table straddles both US
+  daylight-saving changeovers, and five of its thirteen rows fall in CDT while
+  eight fall in CST. A fixed offset would have passed eight and silently broken
+  five
+- **Blueberry Funded** (`blueberry-funded`) — recurring crypto maintenance
+  windows, stated in `BST` (`Europe/London`). The article prints each window in
+  EDT as well, which the golden test uses as the firm's own second opinion on
+  our arithmetic
+- **E8 Markets** (`e8-markets`) — monthly holiday schedule. **This firm has no
+  correct IANA zone.** Their help centre states the server moves to UTC+2 "at
+  the beginning of November" and UTC+3 "at the end of March"; Europe/Athens
+  reverts a week earlier and a fixed offset never moves, so any zone chosen
+  would be an hour wrong for roughly a week each year. New profile flag
+  `require_stated_offset` makes the pipeline use the offset the announcement
+  itself prints on every row and **reject** anything that omits one, rather than
+  publish it at a guessed hour
+- New profile key `strip_selectors`: elements removed from the matched content
+  before its text is read. Intercom help centres nest a "Related Articles" strip
+  *inside* `<article>`, and those teaser headlines are exactly the confident,
+  unrelated prose that becomes wrong calendar entries
+
+### Added — per-firm feeds and health
+- **`/feed.ics?firms=ftmo,topstep`**, combinable with `?types=`. `/feed.ics`
+  with no parameters is untouched and still returns everything
+- Feeds are named after their contents: one firm keeps that firm's name, several
+  read "Prop Firm Trading Updates". An FTMO-only deployment is unchanged
+- **Per-firm health.** `/healthz` gains `sources` (each firm's own freshness,
+  errors, anomalies and staleness verdict) and `unhealthy_sources`; any
+  unhealthy firm makes the overall `ok` false with `status: "degraded"`. A firm
+  that has gone quiet is individually visible instead of averaged into an
+  overall green. The `/status` page grows a matching SOURCES panel
+- **Firms are isolated.** Each is fetched, extracted and reconciled
+  independently, so one firm's redesign cannot freeze the others' calendars.
+  Only when *every* firm fails does the run fail — which, with one firm
+  configured, is exactly the previous behaviour
+
+### Added — scraping politely
+- **An honest User-Agent.** The scraper identified as Chrome 120; it now says
+  `TradingCalendarBot` and links the project, so an operator who wants it to
+  stop can find out who it is
+- **robots.txt is fetched, cached per host, and obeyed** — including rules that
+  name this bot specifically. A disallowed URL raises `RobotsDisallowed` rather
+  than being quietly skipped. An unreachable robots.txt fails open: someone
+  else's outage is not consent withheld
+- **`Crawl-delay` honoured** (capped at 30s), a process-wide per-host request
+  floor, and randomised stagger between firms. All tunable under `[scrape]`
+
+### Added — configuration
+- **`[[firms]]`**: an array of firms, each naming a profile plus optional
+  `url` / `timezone` / `keywords` / `max_posts` / `max_age_days` / `enabled`
+  overrides. Omit it and `[source]` is used as the single firm, unchanged
+- State file v4 adds `firm` to each post. Older state loads untouched, and
+  unattributed posts are read as belonging to the first configured firm so
+  nothing disappears from a per-firm feed on upgrade. `firm` is deliberately
+  **not** part of `event_key`
+
 ## Unreleased
 
 Self-hosting works again, silent failures became loud ones, and a prop firm is

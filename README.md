@@ -247,8 +247,20 @@ for subscribers, and a source link in each event's description.
 - `GET /status` — shareable page: next event, sync health, age of the last
   successful sync, subscribe how-to
 - `GET /healthz` — JSON with `ok`, `status`, `last_run`, `last_success`,
-  `last_success_age_seconds`, `stale`, `next_run`, `last_error`, `anomalies`.
+  `last_success_age_seconds`, `stale`, `next_run`, `last_error`, `anomalies`,
+  plus `sources` (per-firm health) and `unhealthy_sources`.
   **HTTP 503 when not `ok`**, so a plain uptime monitor detects a broken sync.
+
+**Per-firm health.** With several firms configured, each carries its own
+freshness, errors and staleness verdict under `sources`, and **any** unhealthy
+firm makes the overall `ok` false (`status: "degraded"`). A source that has
+quietly stopped publishing must be visible on its own — averaged into an
+overall green, it stays unnoticed until someone gets caught by an outage. The
+`/status` page grows a SOURCES panel showing the same thing.
+
+One firm failing never stops the others: each is fetched, extracted and
+reconciled independently, so a redesigned page at one firm cannot freeze
+everyone else's calendar. Only if *every* firm fails does the run itself fail.
 
 Serve mode keeps the feed available from the moment it starts (last good data,
 even if the newest sync attempt fails) and notifies a given error only once —
@@ -262,6 +274,19 @@ filter with a query parameter — each distinct URL behaves as its own calendar:
 /feed.ics?types=crypto_closure              # crypto closures only
 /feed.ics?types=early_close,holiday_closure # any combination
 ```
+
+**Per-firm feeds:** the same applies to firms, and the two filters combine —
+so a trader funded at one firm subscribes to just that firm:
+
+```
+/feed.ics?firms=ftmo                        # one firm
+/feed.ics?firms=ftmo,topstep                # several
+/feed.ics?firms=topstep&types=early_close   # firm and type together
+```
+
+`/feed.ics` with no parameters keeps returning everything, exactly as it always
+has — the URL people are already subscribed to does not change meaning. An
+unknown firm returns a 400 listing the configured ones.
 
 | Type | Example event title |
 | --- | --- |
@@ -285,30 +310,96 @@ identifiable), feed pulls, and unique feed clients. Today's numbers appear in
 the page footer; `GET /stats` returns JSON with a 30-day daily history
 (persisted in `stats.json`).
 
-## Adding another prop firm
+## Tracking several prop firms
+
+List them; order does not matter.
+
+```toml
+[[firms]]
+profile = "ftmo"
+
+[[firms]]
+profile = "topstep"
+
+[[firms]]
+profile = "blueberry-funded"
+```
+
+Omit `[[firms]]` entirely and the `[source]` section is used as the single
+firm — which is what every configuration written before this feature does, and
+it keeps behaving identically.
+
+### Firms shipped
+
+Each was verified against the live site: a recorded fixture, a hand-checked
+extraction, a golden test pinning the real announcement to its event set, and
+a timezone established from the firm's own words rather than assumed.
+
+| Profile | Firm | What it publishes | Timezone |
+| --- | --- | --- | --- |
+| `ftmo` | FTMO | daily trading updates | fixed GMT+3 (`Etc/GMT-3`) — stated as "MetaTrader platform time" |
+| `topstep` | Topstep | full-year CME holiday table | `America/Chicago` — stated as "CT", observes DST |
+| `blueberry-funded` | Blueberry Funded | recurring crypto maintenance | `Europe/London` — stated as "BST" (with an EDT column that corroborates it) |
+| `e8-markets` | E8 Markets | monthly holiday schedule | **no fallback zone**; the offset is read from each row |
+
+E8 is the interesting case. Their own help centre says the server moves to
+UTC+2 "at the beginning of November" and UTC+3 "at the end of March" — a rule
+that matches no IANA zone (Europe/Athens reverts a week earlier; a fixed offset
+never moves). Rather than pick which week to be wrong in, that profile sets
+`require_stated_offset`: every row of their schedule carries its own `(gmt+3)`,
+so the announcement's offset is used and a row without one is **rejected**
+rather than published at a guessed hour.
+
+### Adding another firm
 
 A source is a TOML file, not a Python module. Copy
 [`src/ftmo_calendar/sources/profiles/example-firm.toml`](src/ftmo_calendar/sources/profiles/example-firm.toml),
-fill in the page's selectors, record a fixture, and select it:
-
-```toml
-[source]
-profile = "fundednext"     # a bundled profile name, or a path to your own .toml
-```
-
-The profile carries the index URL, the CSS selectors for the announcement body
-on index and detail pages, the link pattern for older posts, the firm's fixed
-timezone, its keyword gate, and free-text prompt hints (house vocabulary, the
-boilerplate the model should ignore). Everything else — fetching, retries, date
-parsing, post identity, extraction, consensus, validation, reconcile, the feed
-— is already firm-agnostic.
+fill in the page's selectors, and record a fixture:
 
 ```bash
 python scripts/record_fixtures.py --profile fundednext --posts 2
 ```
 
-records real pages into `tests/fixtures/<profile>/` so the parse tests run
+That records real pages into `tests/fixtures/<profile>/` so the parse tests run
 offline against markup the site actually served.
+
+The profile carries the index URL, the CSS selectors for the announcement body
+on index and detail pages, any sub-elements to strip out of it, the link
+pattern for older posts, the firm's timezone, its keyword gate, and free-text
+prompt hints (house vocabulary, the boilerplate the model should ignore).
+Everything else — fetching, retries, date parsing, post identity, extraction,
+consensus, validation, reconcile, the feed — is already firm-agnostic.
+
+Two things are worth getting right before you ship one:
+
+- **The timezone.** Find out what the firm actually states, and whether it is a
+  fixed offset or a DST-observing zone. Wrong times are worse than no times.
+  If the firm's clock follows no IANA zone, set `require_stated_offset = true`
+  and let the announcement supply the offset.
+- **The post key prefix.** Post keys share one namespace across firms, so give
+  each profile its own `post_key_prefix` and keep it stable once deployed.
+
+## Scraping politely
+
+The project now fetches from several unrelated companies on a schedule, so it
+behaves like something you would not mind having in your access log:
+
+- **An honest User-Agent** — `…(compatible; TradingCalendarBot/1.0;
+  +https://github.com/Bogzx/ftmo-calendar)`. No browser impersonation, so an
+  operator who wants it to stop can find out who it is and say so.
+- **robots.txt is fetched, cached per host, and obeyed.** A disallowed URL is
+  refused outright with a clear error rather than quietly skipped. Rules naming
+  `TradingCalendarBot` specifically are honoured too. An *unreachable* robots.txt
+  fails open — someone else's 500 is not consent withheld, and treating it as a
+  ban would silently empty subscribers' calendars.
+- **`Crawl-delay` is honoured** (capped at 30s, beyond which it is a decision
+  for a human rather than a sleep in the sync loop).
+- **A per-host floor between requests**, shared process-wide, so two profiles on
+  one host still look like one client.
+- **Staggered starts**, so N firms sharing a sync interval do not all fire on
+  the same second of it.
+
+All of it is tunable under `[scrape]`.
 
 ## Scheduling
 
