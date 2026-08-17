@@ -50,6 +50,43 @@ class SourceConfig:
 
 
 @dataclass(frozen=True)
+class FirmConfig:
+    """One firm to scrape. `[[firms]]` entries become these; so does `[source]`.
+
+    Every field except `profile` is an *override*: left unset, the value comes
+    from the profile TOML, which is what makes adding a firm a config file
+    rather than a code change. `None` means "not overridden" — an empty tuple
+    of keywords is a meaningful (if unwise) setting and must not be confused
+    with silence.
+    """
+
+    profile: str
+    url: str | None = None
+    timezone: str | None = None
+    keywords: tuple[str, ...] | None = None
+    max_posts: int = 4
+    max_age_days: int = 14
+    enabled: bool = True
+
+
+@dataclass(frozen=True)
+class ScrapeConfig:
+    """How hard we are allowed to lean on other people's servers."""
+
+    #: Seconds enforced between two requests to the same host.
+    min_request_interval_seconds: float = 2.0
+    #: Upper bound of the random delay before each firm's first request, so
+    #: firms sharing one sync interval do not all fire on the same second.
+    stagger_seconds: float = 5.0
+    #: Honour robots.txt. Settable only so a self-hoster scraping their *own*
+    #: site can turn it off; the shipped default is on and the public instance
+    #: leaves it on.
+    obey_robots: bool = True
+    #: Overrides the identifying User-Agent. Keep the project URL in it.
+    user_agent: str = ""
+
+
+@dataclass(frozen=True)
 class LLMConfig:
     provider: str = "gemini"  # "gemini" | "openai-compatible"
     base_url: str = ""  # e.g. https://openrouter.ai/api/v1
@@ -127,6 +164,14 @@ class AppConfig:
     notify: NotifyConfig = field(default_factory=NotifyConfig)
     ics: IcsConfig = field(default_factory=IcsConfig)
     serve: ServeConfig = field(default_factory=ServeConfig)
+    scrape: ScrapeConfig = field(default_factory=ScrapeConfig)
+    #: Firms to scrape, in order. Derived from `[source]` when `[[firms]]` is
+    #: absent, so a pre-multi-firm config keeps behaving exactly as it did.
+    firms: tuple[FirmConfig, ...] = ()
+
+    @property
+    def enabled_firms(self) -> tuple[FirmConfig, ...]:
+        return tuple(f for f in self.firms if f.enabled)
 
     @property
     def state_path(self) -> Path:
@@ -155,6 +200,57 @@ def _section(cls: type, data: dict, name: str):  # noqa: ANN202 - generic datacl
         raise ConfigError(f"invalid [{name}] section: {e}") from e
 
 
+def _firms_from_data(data: dict, source: SourceConfig) -> tuple[FirmConfig, ...]:
+    """Build the firm list from `[[firms]]`, or from `[source]` when absent.
+
+    Backward compatibility is the whole point of the second branch: a config
+    written before multi-firm support says only `[source] profile = "ftmo"`,
+    and must keep producing exactly one FTMO scraper with exactly the same
+    timezone, keywords and post keys. It does — the derived FirmConfig carries
+    the `[source]` values as overrides only where the user actually set them,
+    which is what `resolve_firm_settings` already did for the single source.
+    """
+    raw = data.get("firms")
+    if raw is None:
+        defaults = SourceConfig()
+        return (
+            FirmConfig(
+                profile=source.profile,
+                url=source.url if source.url != defaults.url else None,
+                timezone=source.timezone if source.timezone != defaults.timezone else None,
+                keywords=source.keywords if source.keywords != defaults.keywords else None,
+                max_posts=source.max_posts,
+                max_age_days=source.max_age_days,
+            ),
+        )
+    if not isinstance(raw, list) or not all(isinstance(item, dict) for item in raw):
+        raise ConfigError("[[firms]] must be an array of tables")
+    if not raw:
+        raise ConfigError(
+            "[[firms]] is present but empty — remove it to use [source], or list a firm"
+        )
+    firms: list[FirmConfig] = []
+    seen: set[str] = set()
+    for item in raw:
+        if "profile" not in item:
+            raise ConfigError("each [[firms]] entry needs a 'profile' key")
+        kwargs = dict(item)
+        if isinstance(kwargs.get("keywords"), list):
+            kwargs["keywords"] = tuple(kwargs["keywords"])
+        try:
+            firm = FirmConfig(**kwargs)
+        except TypeError as e:
+            raise ConfigError(f"invalid [[firms]] entry {item.get('profile')!r}: {e}") from e
+        if firm.profile in seen:
+            raise ConfigError(
+                f"[[firms]] lists profile {firm.profile!r} twice; each firm may appear once "
+                "(two entries would scrape the same site twice and collide on post keys)"
+            )
+        seen.add(firm.profile)
+        firms.append(firm)
+    return tuple(firms)
+
+
 def _validate(cfg: AppConfig) -> None:
     if cfg.llm.provider not in ("gemini", "openai-compatible"):
         raise ConfigError(
@@ -178,11 +274,22 @@ def _validate(cfg: AppConfig) -> None:
         raise ConfigError("llm.models must list at least one model")
     if cfg.llm.consensus_runs < 1:
         raise ConfigError("llm.consensus_runs must be at least 1")
-    for tz_name in (cfg.source.timezone, cfg.calendar.timezone):
+    zones = [cfg.source.timezone, cfg.calendar.timezone]
+    zones += [f.timezone for f in cfg.firms if f.timezone]
+    for tz_name in zones:
         try:
             ZoneInfo(tz_name)
         except (ZoneInfoNotFoundError, ValueError) as e:
             raise ConfigError(f"invalid timezone {tz_name!r}: {e}") from e
+    if not cfg.enabled_firms:
+        raise ConfigError(
+            "no firms are enabled — every [[firms]] entry has enabled = false, "
+            "so nothing would ever be scraped"
+        )
+    from ftmo_calendar.sources.profile import load_profile
+
+    for firm in cfg.firms:
+        load_profile(firm.profile)  # raises ConfigError naming the unknown profile
 
 
 def load_config(path: Path, env: Mapping[str, str] | None = None) -> AppConfig:
@@ -244,6 +351,8 @@ def load_config(path: Path, env: Mapping[str, str] | None = None) -> AppConfig:
         notify=notify,
         ics=_section(IcsConfig, data, "ics"),
         serve=_section(ServeConfig, data, "serve"),
+        scrape=_section(ScrapeConfig, data, "scrape"),
+        firms=_firms_from_data(data, source),
     )
     _validate(cfg)
     return cfg

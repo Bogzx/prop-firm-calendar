@@ -9,6 +9,7 @@ confident prose and comes back as plausible, wrong calendar entries.
 
 from __future__ import annotations
 
+import copy
 import logging
 from datetime import date, timedelta
 from urllib.parse import urljoin
@@ -39,12 +40,13 @@ class WebSource:
         max_age_days: int = 14,
         timeout: int = 30,
         retries: int = 3,
+        fetcher: HttpFetcher | None = None,
     ) -> None:
         self.profile = profile
         self.url = url or profile.url
         self.max_posts = max_posts
         self.max_age_days = max_age_days
-        self._fetcher = HttpFetcher(timeout=timeout, retries=retries)
+        self._fetcher = fetcher or HttpFetcher(timeout=timeout, retries=retries)
 
     # -- public API -----------------------------------------------------
 
@@ -146,7 +148,7 @@ class WebSource:
             node = soup.select_one(selector)
             if node is None:
                 continue
-            text = node.get_text(" ", strip=True)
+            text = self._text_without_stripped(node)
             if len(text) >= self.profile.min_content_chars:
                 return text
             too_short.append(f"{selector!r} matched but held only {len(text)} chars")
@@ -156,6 +158,21 @@ class WebSource:
             f"The {self.profile.display_name} page structure has probably changed; "
             "refusing to guess (a wrong container becomes wrong calendar entries)."
         )
+
+    def _text_without_stripped(self, node: Tag) -> str:
+        """Read a node's text with `strip_selectors` subtrees removed.
+
+        The node is copied first: `parse_listing` and `parse_post` may look at
+        the same soup again, and decomposing out of the live tree would make
+        the result depend on which selector was tried first.
+        """
+        if not self.profile.strip_selectors:
+            return node.get_text(" ", strip=True)
+        clone = copy.copy(node)
+        for selector in self.profile.strip_selectors:
+            for unwanted in clone.select(selector):
+                unwanted.decompose()
+        return clone.get_text(" ", strip=True)
 
     def _get(self, url: str) -> str:
         return self._fetcher.get(url)

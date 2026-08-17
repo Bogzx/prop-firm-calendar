@@ -55,14 +55,32 @@ class SourceProfile:
     link_url_contains: str = ""
     #: Selector for the title on a detail page.
     post_title_selector: str = "h1"
+    #: Elements removed from the matched content before its text is read. Some
+    #: firms nest a "related articles" strip *inside* the article element, so
+    #: no narrower selector exists — and those teaser headlines are exactly the
+    #: kind of confident, unrelated prose that turns into wrong calendar
+    #: entries. Removing them is precise; widening the content selector is not.
+    strip_selectors: tuple[str, ...] = ()
     #: Shorter than this and the "announcement" is a nav blob or a teaser card,
     #: not a post. Raising here is the whole point of the profile.
     min_content_chars: int = 200
     #: Prefix for generated post keys (state identity; keep stable per firm).
     post_key_prefix: str = "trading-update"
-    #: Fixed IANA zone the firm states its times in when an announcement omits
-    #: an offset. Overridden by [source] timezone when that is set explicitly.
+    #: IANA zone the firm states its times in when an announcement omits an
+    #: offset. Overridden by [source]/[[firms]] timezone when set explicitly.
     timezone: str = "Etc/GMT-3"
+    #: Refuse to fall back to `timezone`: publish only events whose announcement
+    #: stated its own UTC offset, and reject the rest.
+    #:
+    #: For firms whose platform clock follows no IANA zone. E8 Markets is the
+    #: worked example: their MT5 server runs UTC+3 from the end of March to the
+    #: beginning of November and UTC+2 otherwise, which is neither Europe/Athens
+    #: (reverts a week earlier) nor a fixed offset. Any zone chosen for them is
+    #: wrong for about a week a year. Since every row of their announcement
+    #: carries its own "(gmt+3)", the correct answer is to use what the firm
+    #: wrote and drop anything it did not — a missing event is recoverable, an
+    #: event published an hour off is what gets someone liquidated.
+    require_stated_offset: bool = False
     #: Keyword gate for relevance, overridden by [source] keywords when set.
     keywords: tuple[str, ...] = ()
     #: Free text appended to the extraction prompt: house vocabulary, symbol
@@ -108,6 +126,7 @@ def profile_from_dict(data: dict, *, default_name: str) -> SourceProfile:
         "post_content_selectors",
         "listing_content_selectors",
         "link_selectors",
+        "strip_selectors",
         "keywords",
     )
     kwargs: dict = {k: v for k, v in data.items() if k not in tuple_keys}
