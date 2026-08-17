@@ -1,6 +1,8 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from ftmo_calendar.stats import StatsStore
 
 DAY1 = datetime(2026, 6, 10, 12, 0, tzinfo=UTC)
@@ -76,7 +78,10 @@ def test_writes_are_debounced(tmp_path: Path) -> None:
     """
     path = tmp_path / "stats.json"
     stats = StatsStore(path, flush_seconds=3600)
-    stats.record_page_view("first", now=DAY1)  # first write always lands
+    # The first write always lands, whatever the platform's monotonic epoch —
+    # so a fresh stats.json exists and an early crash loses nothing.
+    stats.record_page_view("first", now=DAY1)
+    assert path.exists()
     writes_after_first = path.read_text(encoding="utf-8")
 
     for i in range(500):
@@ -85,6 +90,26 @@ def test_writes_are_debounced(tmp_path: Path) -> None:
     assert path.read_text(encoding="utf-8") == writes_after_first  # nothing hit disk
     assert stats.snapshot(now=DAY1)["today"]["feed_hits"] == 500  # counts are exact
     assert path.read_text(encoding="utf-8") != writes_after_first  # snapshot flushed
+
+
+def test_first_write_lands_on_a_freshly_booted_machine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Debouncing must not depend on the platform's monotonic epoch.
+
+    time.monotonic() counts from boot on Linux, so on a fresh CI runner it can
+    be single digits — which silently swallowed the first write when the
+    debounce compared against a 0.0 seed. On Windows (uptime in the thousands)
+    the same code always flushed. Caught by CI; pinned here.
+    """
+    import ftmo_calendar.stats as stats_mod
+
+    monkeypatch.setattr(stats_mod.time, "monotonic", lambda: 3.2)
+    path = tmp_path / "stats.json"
+    stats = StatsStore(path, flush_seconds=3600)
+    stats.record_page_view("alice", now=DAY1)
+    assert path.exists()
+    assert StatsStore(path).snapshot(now=DAY1)["today"]["views"] == 1
 
 
 def test_flush_persists_pending_counts(tmp_path: Path) -> None:

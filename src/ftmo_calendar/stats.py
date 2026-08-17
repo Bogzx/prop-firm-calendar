@@ -32,7 +32,13 @@ class StatsStore:
         self._seen_clients: set[str] = set()
         self._flush_seconds = flush_seconds
         self._dirty = False
-        self._last_flush = 0.0
+        # None = never flushed in this process, which forces the first write
+        # through. Seeding this with 0.0 instead would have made the behaviour
+        # depend on the platform's monotonic epoch: on Windows it is large
+        # (uptime), so the first write always landed, but on a freshly booted
+        # Linux box it can be a handful of seconds and the first write is
+        # silently debounced away.
+        self._last_flush: float | None = None
         self._load()
 
     def record_page_view(self, visitor_id: str, now: datetime | None = None) -> None:
@@ -130,8 +136,8 @@ class StatsStore:
         be lost to a hard kill is one window of counts.
         """
         self._dirty = True
-        elapsed = time.monotonic() - self._last_flush
-        if elapsed >= self._flush_seconds:
+        now = time.monotonic()
+        if self._last_flush is None or now - self._last_flush >= self._flush_seconds:
             self._save()
 
     def _save(self) -> None:
