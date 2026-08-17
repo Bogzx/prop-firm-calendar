@@ -24,6 +24,20 @@ RAW = RawEvent(
     stated_utc_offset="+03:00",
 )
 
+RAW_B = RawEvent(
+    event_type="crypto_closure",
+    start_time="2026-06-07T00:00:00",
+    end_time="2026-06-07T23:59:00",
+    stated_utc_offset="+03:00",
+)
+
+RAW_C = RawEvent(
+    event_type="early_close",
+    start_time="2026-06-08T20:00:00",
+    end_time="2026-06-08T23:59:00",
+    stated_utc_offset="+03:00",
+)
+
 
 def make_config(tmp_path: Path) -> AppConfig:
     return AppConfig(
@@ -256,6 +270,131 @@ def test_empty_extraction_can_delete_when_explicitly_allowed(tmp_path: Path) -> 
     assert sink.deleted == ["gid1"]
     assert report.events_deleted == 1
     assert report.anomalies == []
+
+
+def test_partial_collapse_refuses_to_delete_the_missing_events(tmp_path: Path) -> None:
+    """The refusal must not be bypassable by a partial-but-degraded extraction.
+
+    8 events becoming 1 is a degraded extraction (truncated fetch, consensus
+    flicker), not seven simultaneous withdrawals. If only the all-the-way-to-
+    zero case refused, a shrink to any non-empty subset would silently delete
+    every missing future event — the exact hazard the refusal exists for.
+    """
+    sink, state = FakeSink(), State()
+    config = make_config(tmp_path)
+    run_pipeline(
+        source=FakeSource([POST]),
+        extractor=FakeExtractor([RAW, RAW_B, RAW_C]),
+        sink=sink,
+        state=state,
+        config=config,
+        now=NOW,
+    )
+    keys = {e.event_key for e in state.posts[POST.post_key].events}
+    assert len(keys) == 3
+
+    changed = dataclasses.replace(POST, text=POST.text + " (edited)")
+    report = run_pipeline(
+        source=FakeSource([changed]),
+        extractor=FakeExtractor([RAW]),  # degraded: a strict subset survives
+        sink=sink,
+        state=state,
+        config=config,
+        now=NOW,
+    )
+    assert sink.deleted == []
+    assert report.events_deleted == 0
+    assert {e.event_key for e in state.posts[POST.post_key].events} == keys
+    assert report.anomalies and "refusing to delete" in report.anomalies[0]
+
+
+def test_partial_collapse_can_delete_when_explicitly_allowed(tmp_path: Path) -> None:
+    sink, state = FakeSink(), State()
+    config = make_config(tmp_path)
+    config = dataclasses.replace(
+        config, events=dataclasses.replace(config.events, delete_on_empty_extraction=True)
+    )
+    run_pipeline(
+        source=FakeSource([POST]),
+        extractor=FakeExtractor([RAW, RAW_B]),
+        sink=sink,
+        state=state,
+        config=config,
+        now=NOW,
+    )
+    changed = dataclasses.replace(POST, text=POST.text + " (edited)")
+    report = run_pipeline(
+        source=FakeSource([changed]),
+        extractor=FakeExtractor([RAW]),
+        sink=sink,
+        state=state,
+        config=config,
+        now=NOW,
+    )
+    assert len(sink.deleted) == 1
+    assert report.events_deleted == 1
+    assert report.anomalies == []
+
+
+def test_shrink_with_a_genuinely_new_event_still_reconciles(tmp_path: Path) -> None:
+    """A reschedule announces new times; that is evidence, not doubt.
+
+    Extraction that loses an old event but gains a new one is what a real
+    announcement change looks like, so normal reconcile applies: the stale
+    future event goes, the new one is created.
+    """
+    sink, state = FakeSink(), State()
+    config = make_config(tmp_path)
+    run_pipeline(
+        source=FakeSource([POST]),
+        extractor=FakeExtractor([RAW, RAW_B]),
+        sink=sink,
+        state=state,
+        config=config,
+        now=NOW,
+    )
+    changed = dataclasses.replace(POST, text=POST.text + " (rescheduled)")
+    report = run_pipeline(
+        source=FakeSource([changed]),
+        extractor=FakeExtractor([RAW, RAW_C]),  # RAW_B withdrawn, RAW_C announced
+        sink=sink,
+        state=state,
+        config=config,
+        now=NOW,
+    )
+    assert len(sink.deleted) == 1
+    assert report.events_deleted == 1 and report.events_created == 1
+    assert report.anomalies == []
+
+
+def test_zero_extraction_over_only_past_events_is_not_an_anomaly(tmp_path: Path) -> None:
+    """An edit to a post whose events already happened puts nothing at risk.
+
+    Past events are never deleted anyway, so refusing (and paging a human via
+    503) would be pure noise — e.g. FTMO touching an old post's footer after
+    the window passed.
+    """
+    sink = FakeSink()
+    state = State(
+        posts={
+            POST.post_key: PostState(
+                content_hash="old-hash",
+                last_seen="2026-05-31T00:00:00+00:00",
+                events=[TrackedEvent("past-key", "past-gid", "2026-05-30T14:00:00+03:00")],
+            )
+        }
+    )
+    report = run_pipeline(
+        source=FakeSource([POST]),
+        extractor=FakeExtractor([]),
+        sink=sink,
+        state=state,
+        config=make_config(tmp_path),
+        now=NOW,
+    )
+    assert report.anomalies == []
+    assert sink.deleted == []
+    assert {e.event_key for e in state.posts[POST.post_key].events} == {"past-key"}
 
 
 def test_a_post_that_never_had_events_is_not_an_anomaly(tmp_path: Path) -> None:

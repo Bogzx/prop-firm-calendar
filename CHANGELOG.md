@@ -39,13 +39,15 @@ now a TOML file.
 - **Anomalies**: a run that completes without raising but whose result is not
   believable. Two are detected — the keyword gate matching none of N scraped
   posts (the wording or the page moved), and a post that previously extracted
-  events now extracting zero. They exit non-zero, notify, turn `/healthz` 503,
-  and show on the status page
-- **Refuses to delete on doubt.** A post whose extraction collapses to zero no
-  longer deletes the future events it created; they are kept and flagged. A
-  degraded extraction is indistinguishable from a withdrawn announcement and far
-  more likely. `[events] delete_on_empty_extraction = true` restores the old
-  behaviour
+  events losing some with none new to replace them. They exit non-zero, notify,
+  turn `/healthz` 503, and show on the status page
+- **Refuses to delete on doubt.** A post whose extraction loses events with
+  nothing new to replace them — collapsing to zero, or shrinking from 8 events
+  to 1 — no longer deletes the missing future events; they are kept and
+  flagged. A degraded extraction is indistinguishable from a withdrawn
+  announcement and far more likely; a genuine reschedule announces new times
+  and reconciles normally. `[events] delete_on_empty_extraction = true`
+  restores the old behaviour
 - Status page shows the age of the last *successful* sync and the source name;
   the badge distinguishes OPERATIONAL / SYNC ERROR / SYNC STALE / NEEDS REVIEW
 - Serve mode refuses to start on an unwritable data directory instead of running

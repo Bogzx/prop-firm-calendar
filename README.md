@@ -102,10 +102,12 @@ flowchart LR
   none, the run reports an *anomaly* — non-zero exit, a notification, a 503 on
   `/healthz`, and a badge on the status page. It never silently does nothing
   while you trust an empty calendar.
-- **Refuses to delete on doubt.** If an announcement's extraction collapses to
-  zero events, the future events it created are kept and flagged, not removed —
-  a degraded extraction and a withdrawn announcement look identical, and only
-  one of them is recoverable for someone who planned around the window.
+- **Refuses to delete on doubt.** If an announcement's extraction loses events
+  with nothing new to replace them — collapsing to zero, or shrinking from 8
+  events to 1 — the missing future events are kept and flagged, not removed. A
+  degraded extraction and a withdrawn announcement look identical, and only one
+  of them is recoverable for someone who planned around the window. (A genuine
+  reschedule announces *new* times and reconciles normally.)
 - **Never guesses at content.** Scraper selectors are class-anchored per source;
   structural drift raises instead of feeding the LLM whatever element happened
   to match, which is how a redesign turns into confident, wrong calendar entries.

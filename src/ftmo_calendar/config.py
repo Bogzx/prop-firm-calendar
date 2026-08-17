@@ -110,8 +110,9 @@ class EventRules:
     #: Mark low-confidence events in their title so subscribers can tell a
     #: certain window from an inferred one.
     low_confidence_marker: str = "(unconfirmed)"
-    #: Allow a post whose extraction collapsed to zero events to delete every
-    #: future event it had created. Off by default — see pipeline._reconcile.
+    #: Allow a post whose extraction lost events — collapsed to zero, or shrank
+    #: to a subset with nothing new extracted — to delete the future events it
+    #: had created. Off by default — see pipeline._reconcile.
     delete_on_empty_extraction: bool = False
     summaries: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_SUMMARIES))
 

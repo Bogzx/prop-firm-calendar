@@ -47,7 +47,7 @@ on_events = true                # message when events are created/removed
 on_errors = true                # message when a run fails
 on_anomalies = true             # message when a run "succeeds" but looks wrong:
                                 # the keyword gate matching nothing, or a post's
-                                # extraction collapsing to zero events
+                                # extraction losing events with none new extracted
 heartbeat_hours = 0             # e.g. 24 = daily "I'm alive" ping; 0 = off
 # Channels activate via env vars (see .env.example):
 #   DISCORD_WEBHOOK_URL, TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID, or WEBHOOK_URL
@@ -70,11 +70,14 @@ reject_low_confidence = false   # true = drop extractions the model flagged as a
                                 # guess, instead of publishing them marked
 low_confidence_marker = "(unconfirmed)"   # appended to a low-confidence title
 delete_on_empty_extraction = false        # true restores pre-audit behaviour: a
-                                # post whose extraction collapses to zero events
-                                # deletes every future event it had created.
-                                # Off by default — a degraded extraction looks
-                                # exactly like a withdrawn announcement, and only
-                                # one of the two is recoverable.
+                                # post whose extraction loses events — collapses
+                                # to zero, or shrinks to a subset with nothing
+                                # new extracted — deletes every missing future
+                                # event it had created. Off by default — a
+                                # degraded extraction looks exactly like a
+                                # withdrawn announcement, and only one of the
+                                # two is recoverable. (A reschedule that
+                                # announces new times reconciles normally.)
 
 [events.summaries]
 # Titles per event type. Defaults shown; override any subset.

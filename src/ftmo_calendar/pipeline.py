@@ -41,7 +41,8 @@ class RunReport:
     deleted_lines: list[str] = field(default_factory=list)
     #: Suspicious outcomes from a run that did not raise. A run can succeed
     #: mechanically and still be wrong — the keyword gate matching nothing, or
-    #: extraction collapsing to zero events for a post that had some. Callers
+    #: extraction losing events a post used to have with none new to replace
+    #: them. Callers
     #: surface these on /healthz and over the notification channels so a
     #: quietly broken sync cannot pass for a working one.
     anomalies: list[str] = field(default_factory=list)
@@ -183,18 +184,22 @@ def _reconcile(
     new_keys = {e.event_key for e in events}
     tracked: list[TrackedEvent] = []
 
-    if old and not events and not rules.delete_on_empty_extraction:
-        # A post that produced events now produces none. A genuine withdrawal
-        # looks identical to a degraded extraction (a typo fix that confused the
-        # model, a truncated fetch, a prompt regression) — and the degraded case
-        # is far more likely. Deleting is irreversible for subscribers who have
-        # already planned around the window, so keep every tracked event and
-        # raise an anomaly for a human to judge. Set
-        # [events] delete_on_empty_extraction = true to restore the old behavior.
-        pending = [e for e in old.values() if _future(e, now)]
+    # A post that produced events now produces fewer, with nothing new to
+    # replace them — whether it collapsed to zero or merely shrank to a subset
+    # (8 events becoming 1 is a degraded extraction, not seven withdrawals). A
+    # genuine withdrawal looks identical to a degraded extraction (a typo fix
+    # that confused the model, a truncated fetch, a consensus flicker, a prompt
+    # regression) — and the degraded case is far more likely. A genuine
+    # reschedule, by contrast, announces *new* times and passes this guard.
+    # Deleting is irreversible for subscribers who have already planned around
+    # the window, so keep every tracked event and raise an anomaly for a human
+    # to judge. Set [events] delete_on_empty_extraction = true to restore the
+    # old behavior.
+    pending = [e for k, e in old.items() if k not in new_keys and _future(e, now)]
+    if pending and not (new_keys - old.keys()) and not rules.delete_on_empty_extraction:
         message = (
             f"post {post.post_key} previously extracted {len(old)} event(s) and now extracts "
-            f"none — refusing to delete {len(pending)} future event(s); "
+            f"{len(events)} with none new — refusing to delete {len(pending)} future event(s); "
             "verify the announcement was really withdrawn"
         )
         logger.error("%s", message)

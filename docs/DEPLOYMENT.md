@@ -205,7 +205,7 @@ want CI-gated deploys.
 up". It returns **503** when the last sync raised, when no successful sync has
 landed within twice `sync_interval_minutes`, or when a run completed but
 reported an anomaly (the keyword gate matching nothing, or a post's extraction
-collapsing to zero events). A plain HTTP monitor on that URL is therefore
+losing events with none new extracted). A plain HTTP monitor on that URL is
 enough — no keyword matching needed. The JSON body carries the detail:
 
 ```json
