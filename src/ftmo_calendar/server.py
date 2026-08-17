@@ -5,6 +5,12 @@ subscribes to `http://host:port/feed.ics` from Google/Apple/Outlook calendar —
 no OAuth, no API keys on the subscriber side.
 
 Endpoints: GET /feed.ics (the calendar), GET /status (HTML), GET /healthz (JSON).
+
+`/healthz` is the contract monitors are pointed at (docs/DEPLOYMENT.md), so it
+answers "is this feed trustworthy right now?", not merely "is the process up":
+it returns 503 when the last sync errored, when no successful sync has landed
+within twice the configured interval, or when the last run reported an anomaly
+(see pipeline.RunReport.anomalies).
 """
 
 from __future__ import annotations
@@ -14,7 +20,7 @@ import json
 import logging
 import secrets
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from http.cookies import SimpleCookie
@@ -27,52 +33,128 @@ from ftmo_calendar.stats import StatsStore
 
 logger = logging.getLogger(__name__)
 
+# A sync is considered overdue once this many intervals have passed without a
+# successful run. Two gives one whole interval of slack for a slow or retried
+# run before a monitor is told the feed has gone stale.
+STALE_INTERVALS = 2
+
+# Distinct ?types= combinations to keep rendered feeds for. Subscribers pick
+# from seven checkboxes, so real traffic never approaches this; the cap only
+# stops a crafted request loop from growing the cache without bound.
+_MAX_CACHED_FILTERS = 64
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
 
 @dataclass
 class ServerStatus:
-    """Thread-safe record of how the background sync is doing."""
+    """Thread-safe record of how the background sync is doing.
+
+    `ok` is deliberately more than "no exception was raised": a sync that
+    stopped running weeks ago, or one that ran but reported an anomaly, leaves
+    subscribers with a silently frozen calendar. Both make `ok` false so the
+    documented `/healthz` monitor and the status badge notice.
+    """
 
     started_at: str
     interval_seconds: float = 0
+    source: str = "FTMO"
     last_run: str | None = None
+    last_success: str | None = None
     last_error: str | None = None
     runs_ok: int = 0
     runs_failed: int = 0
+    anomalies: tuple[str, ...] = ()
+    clock: Callable[[], datetime] = _utcnow
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
-    def record_success(self, now: datetime | None = None) -> None:
+    def record_success(
+        self, now: datetime | None = None, anomalies: Sequence[str] | None = None
+    ) -> None:
         with self._lock:
-            self.last_run = (now or datetime.now(UTC)).isoformat()
+            stamp = (now or self.clock()).isoformat()
+            self.last_run = stamp
+            self.last_success = stamp
             self.last_error = None
+            self.anomalies = tuple(anomalies or ())
             self.runs_ok += 1
 
     def record_failure(self, error: BaseException, now: datetime | None = None) -> None:
         with self._lock:
-            self.last_run = (now or datetime.now(UTC)).isoformat()
+            self.last_run = (now or self.clock()).isoformat()
             self.last_error = str(error)
             self.runs_failed += 1
 
-    def snapshot(self) -> dict:
+    @property
+    def stale_after_seconds(self) -> float:
+        return self.interval_seconds * STALE_INTERVALS
+
+    def snapshot(self, now: datetime | None = None) -> dict:
         with self._lock:
+            now = now or self.clock()
             next_run = None
             if self.last_run and self.interval_seconds:
                 next_dt = datetime.fromisoformat(self.last_run) + timedelta(
                     seconds=self.interval_seconds
                 )
                 next_run = next_dt.isoformat()
+
+            # Staleness is measured from the last *successful* run: a loop that
+            # keeps failing on schedule must not look fresh just because it is
+            # busy. Before the first success, a just-started process is given
+            # the same grace window from startup, so a restart does not report
+            # unhealthy the moment it comes up.
+            since = _age(now, self.last_success or self.started_at)
+            # Reported separately, and None until a success actually happens —
+            # the grace window is not something to call a "last success age".
+            age = _age(now, self.last_success) if self.last_success else None
+
+            stale = bool(
+                self.interval_seconds and since is not None and since > self.stale_after_seconds
+            )
+            ok = self.last_error is None and not stale and not self.anomalies
             return {
-                "ok": self.last_error is None,
+                "ok": ok,
+                "status": "error"
+                if self.last_error
+                else "stale"
+                if stale
+                else "anomaly"
+                if self.anomalies
+                else "ok",
+                "source": self.source,
                 "started_at": self.started_at,
                 "last_run": self.last_run,
+                "last_success": self.last_success,
                 "next_run": next_run,
+                "last_success_age_seconds": None if age is None else round(age, 1),
+                "stale": stale,
+                "stale_after_seconds": self.stale_after_seconds or None,
                 "last_error": self.last_error,
+                "anomalies": list(self.anomalies),
                 "runs_ok": self.runs_ok,
                 "runs_failed": self.runs_failed,
             }
 
 
+def _aware(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value
+
+
+def _age(now: datetime, stamp: str | None) -> float | None:
+    """Seconds between an ISO timestamp and now; None if it cannot be read."""
+    if not stamp:
+        return None
+    try:
+        return (now - _aware(datetime.fromisoformat(stamp))).total_seconds()
+    except ValueError:  # pragma: no cover - stamps are written by this class
+        return None
+
+
 def run_sync_loop(
-    sync_fn: Callable[[], None],
+    sync_fn: Callable[[], Sequence[str] | None],
     interval_seconds: float,
     stop: threading.Event,
     status: ServerStatus,
@@ -84,12 +166,17 @@ def run_sync_loop(
     feed keeps serving the last good data. A persistent identical error is
     notified once, not every interval; a success resets the dedup so a
     recurring flap still alerts.
+
+    `sync_fn` may return a sequence of anomaly strings: a run that completed
+    without raising but produced a suspicious result (see
+    pipeline.RunReport.anomalies). They are recorded on the status so
+    `/healthz` and the status page stop reporting healthy.
     """
     last_notified_error: str | None = None
     while not stop.is_set():
         try:
-            sync_fn()
-            status.record_success()
+            anomalies = sync_fn()
+            status.record_success(anomalies=anomalies)
             last_notified_error = None
         except Exception as e:  # noqa: BLE001 - loop must survive any sync failure
             logger.exception("Scheduled sync failed")
@@ -114,6 +201,35 @@ def make_handler(
     from ftmo_calendar.models import EventType
 
     valid_types = {t.value for t in EventType}
+
+    # Rendering a filtered feed re-reads the state file and regenerates the
+    # whole calendar including the VTIMEZONE bisection. The unfiltered feed is
+    # already served from a file on disk; give the filtered variants the same
+    # treatment by caching per type-set, invalidated by the state file's mtime
+    # and size so a completed sync is picked up on the next request.
+    filtered_cache: dict[frozenset[str], tuple[tuple[float, int], bytes]] = {}
+    cache_lock = threading.Lock()
+
+    def _state_version() -> tuple[float, int]:
+        try:
+            stat = state_path.stat()
+        except OSError:
+            return (0.0, 0)
+        return (stat.st_mtime, stat.st_size)
+
+    def render_filtered(requested: frozenset[str]) -> bytes:
+        assert feed_renderer is not None
+        version = _state_version()
+        with cache_lock:
+            cached = filtered_cache.get(requested)
+            if cached is not None and cached[0] == version:
+                return cached[1]
+        body = feed_renderer(requested)
+        with cache_lock:
+            if len(filtered_cache) >= _MAX_CACHED_FILTERS:
+                filtered_cache.clear()
+            filtered_cache[requested] = (version, body)
+        return body
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "ftmo-calendar"  # don't advertise the Python version
@@ -168,7 +284,7 @@ def make_handler(
                         },
                     )
                     return
-                self._respond(200, "text/calendar; charset=utf-8", feed_renderer(requested))
+                self._respond(200, "text/calendar; charset=utf-8", render_filtered(requested))
                 return
             if not ics_path.exists():
                 self._json(404, {"error": "feed not generated yet"})
@@ -178,7 +294,10 @@ def make_handler(
         def do_GET(self) -> None:  # noqa: N802 - stdlib naming
             path = self.path.split("?", 1)[0]
             if path == "/healthz":
-                self._json(200, status.snapshot())
+                # 503 on unhealthy: a monitor pointed here (docs/DEPLOYMENT.md)
+                # can only page you if the status code moves.
+                payload = status.snapshot()
+                self._json(200 if payload["ok"] else 503, payload)
             elif path == "/stats":
                 if stats is None:
                     self._json(404, {"error": "stats not enabled"})
@@ -214,19 +333,48 @@ def make_handler(
     return Handler
 
 
+class DataDirError(Exception):
+    """The data directory cannot be written to — nothing would ever persist."""
+
+
+def check_writable(directory: Path) -> None:
+    """Fail fast when state/feed writes would silently vanish.
+
+    The container runs as uid 1000 against a bind mount. If ./data belongs to
+    another uid, every write fails, but the process stays up, the healthcheck
+    passes, and the feed quietly never updates — exactly the silent failure
+    this tool exists to prevent.
+    """
+    probe = directory / ".ftmo-calendar-write-test"
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+    except OSError as e:
+        raise DataDirError(
+            f"data directory {directory} is not writable ({e}). "
+            "State, stats and the ICS feed could never be saved. In Docker the "
+            "container runs as uid 1000: run `chown -R 1000:1000 data` on the host."
+        ) from e
+
+
 def serve_forever(
     host: str,
     port: int,
     interval_seconds: float,
     ics_path: Path,
     state_path: Path,
-    sync_fn: Callable[[], None],
+    sync_fn: Callable[[], Sequence[str] | None],
     on_error: Callable[[BaseException], None] | None = None,
     feed_renderer: Callable[[frozenset[str]], bytes] | None = None,
     stats: StatsStore | None = None,
+    source_name: str = "FTMO",
 ) -> int:
+    check_writable(state_path.parent)
     status = ServerStatus(
-        started_at=datetime.now(UTC).isoformat(), interval_seconds=interval_seconds
+        started_at=datetime.now(UTC).isoformat(),
+        interval_seconds=interval_seconds,
+        source=source_name,
     )
     stop = threading.Event()
     loop_thread = threading.Thread(
@@ -252,4 +400,6 @@ def serve_forever(
     finally:
         stop.set()
         httpd.server_close()
+        if stats is not None:
+            stats.flush()  # writes are debounced; don't lose the last window
     return 0

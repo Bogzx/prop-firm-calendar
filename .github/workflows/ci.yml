@@ -26,3 +26,32 @@ jobs:
         run: mypy src
       - name: Tests
         run: pytest -v
+
+  docker:
+    # The VPS rebuilds this image from main every five minutes
+    # (scripts/autodeploy.sh), so a Dockerfile that does not build reaches
+    # production before it reaches a human. Build it here first.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t ftmo-calendar:ci .
+      - name: Smoke-test the entrypoint
+        run: docker run --rm ftmo-calendar:ci ftmo-calendar --version
+      - name: Serve mode answers /healthz
+        run: |
+          mkdir -p data && chmod 777 data
+          printf '[calendar]\nenabled = false\n[serve]\nsync_interval_minutes = 60\n' > data/config.toml
+          docker run -d --name ftmo-ci -e LLM_API_KEY=ci-not-a-real-key \
+            -p 8080:8080 -v "$PWD/data:/data" ftmo-calendar:ci
+          for _ in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/healthz || true)
+            if [ -n "$code" ] && [ "$code" != "000" ]; then break; fi
+            sleep 2
+          done
+          echo "healthz responded with $code"
+          # 200 (nothing overdue yet) or 503 (the sync failed on the fake key)
+          # both prove the server is up and answering; a hang or a crash does not.
+          test "$code" = "200" -o "$code" = "503"
+          docker logs ftmo-ci
+          docker rm -f ftmo-ci

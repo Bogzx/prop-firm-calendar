@@ -70,13 +70,16 @@ LLM_API_KEY="sk-or-v1-..."
 # DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
 ```
 
-Bind the app to localhost only (Caddy will be the public face). Edit
-`compose.yaml`:
+The container writes `state.json`, `stats.json` and the feed into `./data` as
+uid 1000, so give it that directory:
 
-```yaml
-    ports:
-      - "127.0.0.1:8080:8080"
+```bash
+sudo chown -R 1000:1000 data
 ```
+
+(Serve mode checks this at startup and refuses to run if the directory is not
+writable — better a loud failure than a container that looks healthy while
+every write silently vanishes.)
 
 Start it:
 
@@ -84,6 +87,25 @@ Start it:
 sudo docker compose up -d
 curl -s http://127.0.0.1:8080/healthz   # expect {"ok": true, ...} after ~30s
 ```
+
+The shipped `compose.yaml` publishes port 8080 on all interfaces, which is what
+the README's `http://your-vps:8080/feed.ics` refers to and what you want if the
+VPS firewall is your only gate. If 8080 is taken, set `PORT=9000` in `.env` —
+no file needs editing.
+
+### Binding to loopback behind a reverse proxy
+
+Once Caddy is the public face (next section), the container no longer needs a
+public port at all. Bind it to loopback so nothing but the proxy can reach it:
+
+```yaml
+    ports:
+      - "127.0.0.1:8133:8080"
+```
+
+Pick a host port that no other container on the box is using — this is why the
+public instance at `calendar.bogdantruta.com` uses 8133 rather than 8080. Then
+point Caddy at the port you chose (section 4) and open only 80/443 in `ufw`.
 
 ## 4. HTTPS with Caddy
 
@@ -96,13 +118,18 @@ curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
 sudo apt update && sudo apt install -y caddy
 ```
 
-`/etc/caddy/Caddyfile`:
+`/etc/caddy/Caddyfile` — the upstream port must be whatever the *host* side of
+the `ports:` mapping says. With the loopback binding above (`127.0.0.1:8133`):
 
 ```
 calendar.bogdantruta.com {
-    reverse_proxy localhost:8080
+    reverse_proxy 127.0.0.1:8133
 }
 ```
+
+If you kept the shipped default instead, the mapping is `8080:8080`, so proxy
+`127.0.0.1:8080`. Proxying a port nothing is bound to is the one mistake here
+that produces a working certificate and a 502 on every request.
 
 ```bash
 sudo systemctl reload caddy
@@ -173,6 +200,25 @@ want CI-gated deploys.
 | Update to a new release | automatic (section 6), or `git pull && sudo docker compose up -d --build` |
 | Restart | `sudo docker compose restart` |
 | Health from outside | point UptimeRobot (or similar) at `/healthz` |
+
+`/healthz` answers "is this feed trustworthy right now?", not "is the process
+up". It returns **503** when the last sync raised, when no successful sync has
+landed within twice `sync_interval_minutes`, or when a run completed but
+reported an anomaly (the keyword gate matching nothing, or a post's extraction
+collapsing to zero events). A plain HTTP monitor on that URL is therefore
+enough — no keyword matching needed. The JSON body carries the detail:
+
+```json
+{
+  "ok": false,
+  "status": "stale",
+  "last_success": "2026-07-24T03:00:00+00:00",
+  "last_success_age_seconds": 1987200,
+  "stale": true,
+  "stale_after_seconds": 43200,
+  "anomalies": []
+}
+```
 
 Everything stateful lives in `./data` (`state.json`, `stats.json`, the feed)
 and in `.env` — back those up and the deployment is fully reproducible.

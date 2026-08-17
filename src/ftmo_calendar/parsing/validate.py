@@ -78,26 +78,50 @@ def validate_events(
             rejections.append(Rejection(raw, "too far in the future"))
         elif end <= now:
             rejections.append(Rejection(raw, "already ended"))
+        elif raw.confidence == "low" and rules.reject_low_confidence:
+            rejections.append(Rejection(raw, "low extraction confidence"))
         else:
             event_type = EventType(raw.event_type)
+            low = raw.confidence == "low"
+            if low:
+                logger.info(
+                    "Low-confidence extraction for %s (%s %s); publishing flagged",
+                    post.post_key,
+                    raw.event_type,
+                    raw.start_time,
+                )
             events.append(
                 TradingEvent(
                     event_type=event_type,
-                    summary=_build_summary(event_type, raw.affected, rules),
-                    description=build_description(post),
+                    summary=_build_summary(event_type, raw.affected, rules, low=low),
+                    description=_describe(post, low=low),
                     start=start.astimezone(calendar_tz),
                     end=end.astimezone(calendar_tz),
                     source_post_key=post.post_key,
                     source_url=post.url,
+                    confidence=raw.confidence,
                 )
             )
     return events, rejections
 
 
+_LOW_CONFIDENCE_NOTE = (
+    "Extraction confidence: LOW — the announcement did not state this clearly. "
+    "Check the source before relying on it."
+)
+
+
+def _describe(post: SourcePost, *, low: bool) -> str:
+    description = build_description(post)
+    return f"{_LOW_CONFIDENCE_NOTE}\n\n{description}" if low else description
+
+
 _AFFECTED_LIMIT = 70
 
 
-def _build_summary(event_type: EventType, affected: str | None, rules: EventRules) -> str:
+def _build_summary(
+    event_type: EventType, affected: str | None, rules: EventRules, *, low: bool = False
+) -> str:
     summary = rules.summaries.get(event_type.value, rules.summaries["other"])
     # The affected list is model-extracted from scraped text — strip control
     # characters so it can never smuggle line breaks into ICS/HTML contexts.
@@ -106,4 +130,8 @@ def _build_summary(event_type: EventType, affected: str | None, rules: EventRule
         if len(affected) > _AFFECTED_LIMIT:
             affected = affected[:_AFFECTED_LIMIT].rstrip(", ") + "…"
         summary = f"{summary} — {affected}"
+    # A guess the model itself flagged must not sit in a subscriber's calendar
+    # looking exactly as certain as a stated maintenance window.
+    if low and rules.low_confidence_marker:
+        summary = f"{summary} {rules.low_confidence_marker}"
     return summary

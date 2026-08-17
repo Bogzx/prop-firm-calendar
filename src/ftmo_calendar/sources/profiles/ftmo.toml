@@ -1,0 +1,49 @@
+# FTMO — https://ftmo.com/en/trading-updates/
+#
+# Verified against live pages on 2026-08-17 (recorded in tests/fixtures/ftmo/).
+# The index page inlines the newest post's full text in `div.content.tu` under
+# an <h1> like "Trading Update | 13 Aug 2026", and links older posts via
+# `article.post-card` cards. Detail pages reuse the same content container.
+#
+# Note what is NOT here: a loose `article, div.entry-content` fallback. On a
+# real detail page that selector matches the first related-posts teaser card,
+# so any change to `div.content.tu` would have silently fed the LLM a list of
+# headlines. Selectors stay class-anchored; drift raises ScrapeError.
+
+name = "ftmo"
+display_name = "FTMO"
+url = "https://ftmo.com/en/trading-updates/"
+
+listing_title_selector = "h1"
+listing_title_contains = "trading update"
+listing_content_selectors = ["div.content.tu", "main div.content"]
+
+link_selectors = ["article.post-card"]
+link_url_contains = "/blog/trading-updates/"
+
+post_title_selector = "h1"
+post_content_selectors = ["div.content.tu", "main div.content"]
+
+min_content_chars = 200
+post_key_prefix = "trading-update"
+
+# "All times hereafter are expressed in MetaTrader platform time — GMT+3."
+# A fixed offset, not a DST-observing civil zone.
+timezone = "Etc/GMT-3"
+
+keywords = ["maintenance", "market is closed", "ctrader", "holiday", "crypto"]
+
+prompt_hints = """
+This firm writes every announcement in MetaTrader platform time, GMT+3, and
+usually says so in a leading sentence; treat times as +03:00 unless a different
+offset is stated. Symbols appear as "US30.cash", "CORN.c", "Metals CFD",
+"Equities I CFD", "Agriculture". Every post also repeats standing boilerplate
+about overnight swap adjustments and the war in Ukraine — neither is a
+scheduled interruption; ignore both.
+"""
+
+notes = """
+Post keys are derived from the announcement date, which appears month-first
+when embedded on the index ("Jun 4 2026") and day-first on the detail page
+("4 Jun 2026"); parse_title_date normalises both to the same key.
+"""

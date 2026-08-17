@@ -52,7 +52,7 @@ Feed-only mode needs **no Google account at all** — one LLM key and one contai
 
 ```bash
 git clone https://github.com/Bogzx/ftmo-calendar && cd ftmo-calendar
-mkdir data
+mkdir data && sudo chown -R 1000:1000 data   # the container runs as uid 1000
 printf '[calendar]\nenabled = false\n' > data/config.toml
 cp .env.example .env          # put your LLM_API_KEY in it
 docker compose up -d
@@ -60,9 +60,14 @@ docker compose up -d
 
 That's it. Your group subscribes to `http://your-vps:8080/feed.ics`, and
 `http://your-vps:8080/status` is a shareable page with the next event and
-subscribe instructions. `/healthz` reports `ok`, `last_run`, `next_run`, and
-`last_error` for uptime monitors. A failing sync never takes the feed down —
-the last good data keeps serving and you get a notification (see below).
+subscribe instructions. Set `PORT=9000` in `.env` if 8080 is taken. A failing
+sync never takes the feed down — the last good data keeps serving and you get a
+notification (see below).
+
+`/healthz` is built for an uptime monitor: it returns **503**, not 200, when the
+last sync failed, when no successful sync has landed within twice the sync
+interval, or when a run finished but produced a suspicious result. Point
+UptimeRobot at it and a silently frozen calendar pages you.
 
 ![The hosted landing page — live countdown, one-click subscribe](docs/assets/landing-desktop.png)
 
@@ -90,8 +95,20 @@ flowchart LR
 - **Deterministic.** Temperature-0 extraction with a strict JSON schema, a repair
   retry, model fallback, and sanity validation (end after start, duration caps,
   plausible date window, timezone taken from the announcement's stated offset).
-- **Fails loudly.** A broken scraper or expired token exits non-zero with clear
-  instructions — it never silently does nothing while you trust an empty calendar.
+- **Fails loudly — including when nothing raised.** A broken scraper or expired
+  token exits non-zero with clear instructions. So do the quiet failures, which
+  are the dangerous ones: if the keyword gate stops matching any post (FTMO
+  reworded, or the page moved), or a post that had events suddenly extracts
+  none, the run reports an *anomaly* — non-zero exit, a notification, a 503 on
+  `/healthz`, and a badge on the status page. It never silently does nothing
+  while you trust an empty calendar.
+- **Refuses to delete on doubt.** If an announcement's extraction collapses to
+  zero events, the future events it created are kept and flagged, not removed —
+  a degraded extraction and a withdrawn announcement look identical, and only
+  one of them is recoverable for someone who planned around the window.
+- **Never guesses at content.** Scraper selectors are class-anchored per source;
+  structural drift raises instead of feeding the LLM whatever element happened
+  to match, which is how a redesign turns into confident, wrong calendar entries.
 
 ## Quickstart
 
@@ -179,15 +196,36 @@ Get pinged when something changes — or when something breaks. Add a channel to
 DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."   # and/or:
 TELEGRAM_BOT_TOKEN="123456:ABC..."
 TELEGRAM_CHAT_ID="123456789"
+WEBHOOK_URL="https://hooks.example.com/services/..."         # generic JSON POST
 ```
 
 You'll receive messages like:
 
 ```
 📅 FTMO Calendar updated
-➕ ⚠️ FTMO Platform Maintenance — Sat 06 Jun 08:00–14:00 EEST
+➕ ⚠️ Platform Maintenance — Sat 06 Jun 08:00–14:00 +03
+
+⚠️ ftmo-calendar ran but the result looks wrong:
+• keyword gate matched none of 4 scraped post(s) — the announcement wording
+  or the page structure may have changed
 
 ❌ ftmo-calendar run failed: OAuth token refresh failed (expired or revoked). ...
+```
+
+This is the push that an ICS feed cannot give you: a subscriber's calendar app
+polls on its own schedule, but a webhook fires the moment a window is
+announced. `WEBHOOK_URL` accepts anything that takes a JSON POST — Slack and
+Mattermost incoming webhooks work as-is on the `text` field, and receivers that
+want structure get the events too:
+
+```json
+{
+  "kind": "events",
+  "text": "📅 FTMO Calendar updated\n➕ ⚠️ Platform Maintenance — …",
+  "created": ["⚠️ Platform Maintenance — Sat 06 Jun 08:00–14:00 +03"],
+  "removed": [],
+  "anomalies": []
+}
 ```
 
 Set `heartbeat_hours = 24` under `[notify]` in `config.toml` for a daily
@@ -204,8 +242,11 @@ for subscribers, and a source link in each event's description.
 `ftmo-calendar serve` exposes it over HTTP alongside operations endpoints:
 
 - `GET /feed.ics` — the calendar feed (add it as "subscribe by URL")
-- `GET /status` — shareable page: next event, sync health, subscribe how-to
-- `GET /healthz` — JSON with `ok`, `last_run`, `next_run`, `last_error`
+- `GET /status` — shareable page: next event, sync health, age of the last
+  successful sync, subscribe how-to
+- `GET /healthz` — JSON with `ok`, `status`, `last_run`, `last_success`,
+  `last_success_age_seconds`, `stale`, `next_run`, `last_error`, `anomalies`.
+  **HTTP 503 when not `ok`**, so a plain uptime monitor detects a broken sync.
 
 Serve mode keeps the feed available from the moment it starts (last good data,
 even if the newest sync attempt fails) and notifies a given error only once —
@@ -242,10 +283,36 @@ identifiable), feed pulls, and unique feed clients. Today's numbers appear in
 the page footer; `GET /stats` returns JSON with a 30-day daily history
 (persisted in `stats.json`).
 
+## Adding another prop firm
+
+A source is a TOML file, not a Python module. Copy
+[`src/ftmo_calendar/sources/profiles/example-firm.toml`](src/ftmo_calendar/sources/profiles/example-firm.toml),
+fill in the page's selectors, record a fixture, and select it:
+
+```toml
+[source]
+profile = "fundednext"     # a bundled profile name, or a path to your own .toml
+```
+
+The profile carries the index URL, the CSS selectors for the announcement body
+on index and detail pages, the link pattern for older posts, the firm's fixed
+timezone, its keyword gate, and free-text prompt hints (house vocabulary, the
+boilerplate the model should ignore). Everything else — fetching, retries, date
+parsing, post identity, extraction, consensus, validation, reconcile, the feed
+— is already firm-agnostic.
+
+```bash
+python scripts/record_fixtures.py --profile fundednext --posts 2
+```
+
+records real pages into `tests/fixtures/<profile>/` so the parse tests run
+offline against markup the site actually served.
+
 ## Scheduling
 
-Exit codes: `0` success, `1` runtime error, `2` configuration/auth error — so your
-scheduler can alert you on failure.
+Exit codes: `0` success, `1` runtime error (including a run that completed but
+reported an anomaly), `2` configuration/auth error — so your scheduler can alert
+you on failure.
 
 **Linux (cron), every 6 hours:**
 
@@ -282,9 +349,15 @@ schtasks /Create /TN "FTMO Calendar" /SC HOURLY /MO 6 `
   [open an issue](https://github.com/Bogzx/ftmo-calendar/issues).
 - **LLM quota errors** → add more fallback `models`, or point `provider`/`base_url`
   at a different (or local) provider.
-- **Wrong event times** → FTMO states times in GMT+3; the extractor uses the offset
-  stated in each announcement. Check `[source] timezone` only if announcements stop
-  stating an offset.
+- **Wrong event times** → FTMO states times in GMT+3 (MetaTrader platform time, a
+  *fixed* offset), and the extractor uses the offset stated in each announcement.
+  `[source] timezone` is the fallback when an announcement omits one; it defaults
+  to `Etc/GMT-3`. Do not set it to a DST-observing civil zone such as
+  `Europe/Bucharest` — that is GMT+2 from late October to late March and shifts
+  every offset-less winter announcement an hour early.
+- **`/healthz` returns 503 but nothing looks broken** → check `status` in the
+  JSON body: `stale` means no successful sync within two intervals, `anomaly`
+  means a run finished but its result is not trustworthy (see `anomalies`).
 
 ## Development
 

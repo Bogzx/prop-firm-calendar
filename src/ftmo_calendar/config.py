@@ -27,13 +27,26 @@ DEFAULT_SUMMARIES: dict[str, str] = {
 }
 
 
+# FTMO states every announcement in "MetaTrader platform time — GMT+3", which is
+# a *fixed* offset that does not observe daylight saving. Europe/Bucharest happens
+# to equal GMT+3 in summer but is GMT+2 from late October to late March, so using
+# it as the default parsed every offset-less announcement an hour early for five
+# months of the year. Etc/GMT-3 is the IANA zone for a fixed UTC+03:00 (the sign
+# in Etc/ names is inverted by POSIX convention).
+FTMO_PLATFORM_TZ = "Etc/GMT-3"
+
+
 @dataclass(frozen=True)
 class SourceConfig:
     url: str = "https://ftmo.com/en/trading-updates/"
     keywords: tuple[str, ...] = ("maintenance", "market is closed", "ctrader", "holiday", "crypto")
-    timezone: str = "Europe/Bucharest"
+    timezone: str = FTMO_PLATFORM_TZ
     max_posts: int = 4
     max_age_days: int = 14
+    #: Name of a source profile in sources/profiles (see sources.profile). The
+    #: default keeps the built-in FTMO scraper; any other value loads that
+    #: profile's declarative selectors, so a new prop firm is a TOML file.
+    profile: str = "ftmo"
 
 
 @dataclass(frozen=True)
@@ -51,7 +64,10 @@ class CalendarConfig:
     auth_mode: str = "oauth"  # "oauth" | "service_account"
     name: str = "Trading"
     calendar_id: str = ""  # required for service_account; optional override for oauth
-    timezone: str = "Europe/Bucharest"
+    # The feed renders wall-clock times in this zone (0.8.1). To read as FTMO
+    # announced them all year — not only during European summer time — that has
+    # to be the same fixed GMT+3 the announcements are written in.
+    timezone: str = FTMO_PLATFORM_TZ
     reminders_minutes: tuple[int, ...] = (60, 10)
     credentials_file: str = "credentials.json"
     token_file: str = "token.json"
@@ -62,11 +78,13 @@ class CalendarConfig:
 class NotifyConfig:
     on_events: bool = True
     on_errors: bool = True
+    on_anomalies: bool = True  # alert when a run succeeds but looks wrong
     heartbeat_hours: int = 0  # 0 = heartbeat disabled
     # Channel secrets come from env vars, never from TOML:
     discord_webhook_url: str = ""  # DISCORD_WEBHOOK_URL
     telegram_bot_token: str = ""  # TELEGRAM_BOT_TOKEN
     telegram_chat_id: str = ""  # TELEGRAM_CHAT_ID
+    webhook_url: str = ""  # WEBHOOK_URL — generic JSON POST (Slack, n8n, your own)
 
 
 @dataclass(frozen=True)
@@ -86,6 +104,15 @@ class ServeConfig:
 class EventRules:
     max_duration_hours: int = 48
     max_days_ahead: int = 120
+    #: Drop extractions the model marked "low" instead of publishing them. Off
+    #: by default: a flagged guess is more useful to a subscriber than silence.
+    reject_low_confidence: bool = False
+    #: Mark low-confidence events in their title so subscribers can tell a
+    #: certain window from an inferred one.
+    low_confidence_marker: str = "(unconfirmed)"
+    #: Allow a post whose extraction collapsed to zero events to delete every
+    #: future event it had created. Off by default — see pipeline._reconcile.
+    delete_on_empty_extraction: bool = False
     summaries: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_SUMMARIES))
 
 
@@ -183,6 +210,15 @@ def load_config(path: Path, env: Mapping[str, str] | None = None) -> AppConfig:
     events = EventRules(
         max_duration_hours=events_raw.get("max_duration_hours", EventRules.max_duration_hours),
         max_days_ahead=events_raw.get("max_days_ahead", EventRules.max_days_ahead),
+        reject_low_confidence=events_raw.get(
+            "reject_low_confidence", EventRules.reject_low_confidence
+        ),
+        low_confidence_marker=events_raw.get(
+            "low_confidence_marker", EventRules.low_confidence_marker
+        ),
+        delete_on_empty_extraction=events_raw.get(
+            "delete_on_empty_extraction", EventRules.delete_on_empty_extraction
+        ),
         summaries=summaries,
     )
 
@@ -195,6 +231,7 @@ def load_config(path: Path, env: Mapping[str, str] | None = None) -> AppConfig:
         discord_webhook_url=env_map.get("DISCORD_WEBHOOK_URL", ""),
         telegram_bot_token=env_map.get("TELEGRAM_BOT_TOKEN", ""),
         telegram_chat_id=env_map.get("TELEGRAM_CHAT_ID", ""),
+        webhook_url=env_map.get("WEBHOOK_URL", ""),
     )
 
     cfg = AppConfig(

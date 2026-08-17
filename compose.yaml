@@ -3,12 +3,19 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      # Loopback-only: the host-level Caddy reverse-proxies calendar.bogdantruta.com
-      # to 127.0.0.1:8133. Do NOT bind 0.0.0.0 or reuse 8080 (other containers use it).
-      - "127.0.0.1:8133:8080"
+      # Published on all interfaces so `http://your-vps:8080/feed.ics` works out
+      # of the box. Override the host port with PORT=9000 in .env if 8080 is
+      # taken. To put it behind a reverse proxy instead, bind loopback only —
+      # see docs/DEPLOYMENT.md ("Binding to loopback behind a reverse proxy").
+      - "${PORT:-8080}:8080"
     env_file:
-      - .env # LLM_API_KEY, optional DISCORD_WEBHOOK_URL / TELEGRAM_* vars
+      - .env # LLM_API_KEY, optional DISCORD_WEBHOOK_URL / TELEGRAM_* / WEBHOOK_URL vars
     volumes:
       # Put config.toml and service_account.json (or token.json) in ./data.
-      # state.json and the ICS feed are written there too.
+      # state.json, stats.json and the ICS feed are written there too.
+      #
+      # The container runs as uid 1000. If ./data is owned by another uid the
+      # app cannot persist anything: run `chown -R 1000:1000 data` once. Serve
+      # mode refuses to start on an unwritable data directory rather than
+      # running healthy while losing every write.
       - ./data:/data

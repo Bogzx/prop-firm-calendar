@@ -1,0 +1,82 @@
+{
+  "_comment": [
+    "Golden extraction for the Memorial Day / Buddha's Birthday announcement of",
+    "21 May 2026 (CHANGELOG 0.8.0: 'the Memorial Day announcement extracts as 8",
+    "correctly-typed events with zero rejections'). That result was verified by",
+    "hand and recorded nowhere, so a prompt or taxonomy edit could silently",
+    "regress it. These are the RawEvents a correct extraction must produce from",
+    "tests/fixtures/ftmo/trading-update-21-may-2026.html; test_golden_extraction.py",
+    "pins them, and pins what validation then turns them into.",
+    "",
+    "Times are GMT+3 ('All times hereafter are expressed in MetaTrader platform",
+    "time - GMT+3'), which the post states explicitly, so every event carries",
+    "stated_utc_offset. Same-day closures end at 23:59:00 and late opens start at",
+    "00:00:00, per the event-type rules in parsing/llm.py PROMPT_TEMPLATE."
+  ],
+  "events": [
+    {
+      "event_type": "maintenance",
+      "start_time": "2026-05-23T17:00:00",
+      "end_time": "2026-05-23T21:00:00",
+      "stated_utc_offset": "+03:00",
+      "affected": "MT4, MT5, cTrader, DXtrade",
+      "confidence": "high"
+    },
+    {
+      "event_type": "early_close",
+      "start_time": "2026-05-25T20:00:00",
+      "end_time": "2026-05-25T23:59:00",
+      "stated_utc_offset": "+03:00",
+      "affected": "JP225.cash, US30.cash, US100.cash, US500.cash, US2000.cash",
+      "confidence": "high"
+    },
+    {
+      "event_type": "early_close",
+      "start_time": "2026-05-25T21:30:00",
+      "end_time": "2026-05-25T23:59:00",
+      "stated_utc_offset": "+03:00",
+      "affected": "Metals CFD, USOIL.cash, HEATOIL.c, NATGAS.cash",
+      "confidence": "high"
+    },
+    {
+      "event_type": "holiday_closure",
+      "start_time": "2026-05-25T00:00:00",
+      "end_time": "2026-05-25T23:59:00",
+      "stated_utc_offset": "+03:00",
+      "affected": "UK100.cash, HK50.cash, Equities I CFD, Agriculture",
+      "confidence": "high"
+    },
+    {
+      "event_type": "early_close",
+      "start_time": "2026-05-25T23:00:00",
+      "end_time": "2026-05-25T23:59:00",
+      "stated_utc_offset": "+03:00",
+      "affected": "GER40.cash",
+      "confidence": "high"
+    },
+    {
+      "event_type": "early_close",
+      "start_time": "2026-05-25T20:30:00",
+      "end_time": "2026-05-25T23:59:00",
+      "stated_utc_offset": "+03:00",
+      "affected": "UKOIL.cash",
+      "confidence": "high"
+    },
+    {
+      "event_type": "late_open",
+      "start_time": "2026-05-26T00:00:00",
+      "end_time": "2026-05-26T03:05:00",
+      "stated_utc_offset": "+03:00",
+      "affected": "UK100.cash",
+      "confidence": "high"
+    },
+    {
+      "event_type": "late_open",
+      "start_time": "2026-05-26T00:00:00",
+      "end_time": "2026-05-26T16:35:00",
+      "stated_utc_offset": "+03:00",
+      "affected": "CORN.c, SOYBEAN.c, WHEAT.c",
+      "confidence": "high"
+    }
+  ]
+}

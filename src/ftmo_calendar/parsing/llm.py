@@ -89,7 +89,9 @@ trading interruption.
 - Ignore condition changes that interrupt nothing: leverage adjustments, execution-model \
 news, permanent session-time changes ("effective from..."), spread or swap updates.
 - If there are no scheduled events, output [].
-
+- Set "confidence" to "low" when you had to infer a date or time that the text \
+does not state outright; "high" only when the announcement says it plainly.
+{hints}
 Announcement text:
 ---
 {text}
@@ -101,12 +103,21 @@ _THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
 class EventExtractor:
-    def __init__(self, backend: LLMBackend, models: Sequence[str], consensus_runs: int = 1) -> None:
+    def __init__(
+        self,
+        backend: LLMBackend,
+        models: Sequence[str],
+        consensus_runs: int = 1,
+        prompt_hints: str = "",
+    ) -> None:
         if not models:
             raise ValueError("at least one model is required")
         self.backend = backend
         self.models = list(models)
         self.consensus_runs = max(1, consensus_runs)
+        # Firm-specific vocabulary and boilerplate-to-ignore, supplied by the
+        # source profile so a new firm needs no prompt edit in Python.
+        self.prompt_hints = prompt_hints.strip()
 
     def extract(self, text: str) -> list[RawEvent]:
         """Extract events; with consensus_runs > 1, majority-vote across runs.
@@ -116,7 +127,10 @@ class EventExtractor:
         temperature 0. Majority voting across runs makes the reported event
         set stable run-to-run.
         """
-        prompt = PROMPT_TEMPLATE.format(text=text)
+        hints = ""
+        if self.prompt_hints:
+            hints = f"\nAbout this source specifically:\n{self.prompt_hints}\n"
+        prompt = PROMPT_TEMPLATE.format(text=text, hints=hints)
         if self.consensus_runs == 1:
             return self._extract_with_fallback(prompt)
         runs = [self._extract_with_fallback(prompt) for _ in range(self.consensus_runs)]

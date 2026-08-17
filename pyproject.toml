@@ -31,10 +31,18 @@ Repository = "https://github.com/Bogzx/ftmo-calendar"
 ftmo-calendar = "ftmo_calendar.cli:entry"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.5", "mypy>=1.10", "types-requests"]
+# ruff and mypy are pinned exactly, to the versions in requirements.lock: both
+# gate CI, and both add rules in minor releases. Unpinned, someone else's
+# release turns a contributor's green build red on a branch they never touched
+# — which is precisely what ruff 0.16 did here by starting to format fenced
+# code blocks inside Markdown. Bump these deliberately, with the lock file.
+dev = ["pytest>=8", "ruff==0.15.16", "mypy==2.1.0", "types-requests"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ftmo_calendar"]
+# Source profiles are data, not code: without this a wheel install has no
+# profiles directory and every run fails on a missing ftmo.toml.
+artifacts = ["src/ftmo_calendar/sources/profiles/*.toml"]
 
 [tool.ruff]
 line-length = 100

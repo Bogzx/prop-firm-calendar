@@ -44,6 +44,11 @@ class TradingEvent:
     end: datetime  # timezone-aware
     source_post_key: str
     source_url: str
+    #: How sure the extraction was ("high" | "low"), carried through from the
+    #: model's own assessment. Deliberately excluded from event_key: the same
+    #: window re-extracted with different confidence is the same event, and a
+    #: confidence flicker must not orphan a calendar entry.
+    confidence: str = "high"
 
     @property
     def event_key(self) -> str:

@@ -1,5 +1,103 @@
 # Changelog
 
+## Unreleased
+
+Self-hosting works again, silent failures became loud ones, and a prop firm is
+now a TOML file.
+
+### Fixed
+- **`docker compose up -d` publishes the feed the README documents.** The
+  shipped compose file bound `127.0.0.1:8133` — one maintainer's reverse-proxy
+  arrangement, published as everyone's default — while the README told people to
+  subscribe on `:8080`. It now publishes `${PORT:-8080}:8080`; the loopback and
+  Caddy specifics moved to `docs/DEPLOYMENT.md`, whose own instructions were
+  stale in the opposite direction (bind `:8080`, proxy `:8080`, against a
+  container listening on `:8133`)
+- **Default timezone no longer drifts an hour for five months a year.** FTMO
+  states every announcement in MetaTrader platform time — a *fixed* GMT+3.
+  `Europe/Bucharest` equals that only from late March to late October, so any
+  announcement omitting its offset was parsed an hour early all winter. Both
+  `[source] timezone` and `[calendar] timezone` now default to `Etc/GMT-3`
+- Scraper no longer falls back to `article, div.entry-content`. On a real FTMO
+  post page that matches the first related-posts teaser card, so losing
+  `div.content.tu` would have fed the model a list of headlines and produced
+  confident, wrong calendar entries. Selectors are class-anchored per source and
+  structural drift raises `ScrapeError`
+- Stats are no longer serialized and fsync-replaced on every HTTP request —
+  writes are debounced, which closes a request-loop amplification vector on the
+  public feed
+- `?types=` feeds are cached per type-set (invalidated by the state file), so a
+  filtered subscriber no longer re-runs the VTIMEZONE bisection on every poll
+
+### Added — failure detection
+- **`/healthz` returns 503 when the feed is not trustworthy**: the last sync
+  raised, no successful sync landed within twice the sync interval, or a run
+  reported an anomaly. `docs/DEPLOYMENT.md` has always told operators to point
+  UptimeRobot at this endpoint, which until now returned 200 unconditionally.
+  New fields: `status`, `last_success`, `last_success_age_seconds`, `stale`,
+  `stale_after_seconds`, `anomalies`
+- **Anomalies**: a run that completes without raising but whose result is not
+  believable. Two are detected — the keyword gate matching none of N scraped
+  posts (the wording or the page moved), and a post that previously extracted
+  events now extracting zero. They exit non-zero, notify, turn `/healthz` 503,
+  and show on the status page
+- **Refuses to delete on doubt.** A post whose extraction collapses to zero no
+  longer deletes the future events it created; they are kept and flagged. A
+  degraded extraction is indistinguishable from a withdrawn announcement and far
+  more likely. `[events] delete_on_empty_extraction = true` restores the old
+  behaviour
+- Status page shows the age of the last *successful* sync and the source name;
+  the badge distinguishes OPERATIONAL / SYNC ERROR / SYNC STALE / NEEDS REVIEW
+- Serve mode refuses to start on an unwritable data directory instead of running
+  healthy while every write vanishes (the uid-1000 bind-mount trap)
+
+### Added — correctness
+- `confidence` is finally read. It was declared, prompted for and consensus-voted
+  since 0.5, then discarded: a guess reached subscribers looking exactly as
+  certain as a stated maintenance window. Low-confidence events are now marked in
+  their title and description, or dropped entirely with
+  `[events] reject_low_confidence = true`. It is deliberately excluded from
+  `event_key`, so a confidence flicker cannot orphan a calendar entry
+
+### Added — features
+- **Config-driven source adapter.** A prop firm is a TOML profile
+  (`src/ftmo_calendar/sources/profiles/`) plus a recorded fixture, selected with
+  `[source] profile`. The profile carries the URL, selectors, link pattern,
+  timezone, keyword gate and firm-specific prompt hints; `example-firm.toml`
+  documents every field. The FTMO scraper is now one of these
+- **Generic webhook notifier** (`WEBHOOK_URL`): a JSON POST on every new
+  interruption, alongside Discord and Telegram. Carries both rendered `text`
+  (Slack/Mattermost work as-is) and structured `created` / `removed` /
+  `anomalies`. An ICS feed is pull-based and quiet; this is the push
+
+### Added — supply chain and tests
+- Docker image installs with `-c requirements.lock`, pinning every resolved
+  version. The production server rebuilds from `main` every five minutes, so it
+  had been picking up whatever each dependency released that day
+- `ruff` and `mypy` pinned to the locked versions in the `dev` extra — an
+  unpinned `ruff` turns a contributor's green build red on someone else's
+  release schedule (`ruff` 0.16 did exactly this by starting to format code
+  blocks inside Markdown)
+- CI builds the Docker image and smoke-tests serve mode. A broken Dockerfile
+  used to reach the auto-deploying production server before it reached a human
+- **Real recorded fixtures.** The previous 22- and 9-line fixtures were
+  hand-authored to match the parser, while CONTRIBUTING called them "recorded".
+  `scripts/record_fixtures.py` captures live pages; `tests/fixtures/ftmo/` now
+  holds three real ones
+- **Golden test** pinning the Memorial Day announcement of 21 May 2026 — the
+  extraction 0.8.0 verified by hand and recorded nowhere — to its 8 typed events,
+  their announced wall-clock times, their type distribution and their stability
+  under consensus voting
+- Tests pin the shipped files against the code: `config.example.toml` cannot
+  drift from the event taxonomy again, and compose/README/DEPLOYMENT must agree
+  on a port
+
+### Changed
+- `config.example.toml` regenerated from `DEFAULT_SUMMARIES` — it documented the
+  pre-0.8 taxonomy, listing `holiday_hours` and omitting four of the seven
+  current event types
+- `[notify] on_anomalies` (default true) controls the new alerts
+
 ## 0.8.1 — 2026-06-12
 
 ### Fixed

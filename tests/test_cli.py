@@ -129,3 +129,40 @@ def test_heartbeat_not_sent_when_fresh(tmp_path: Path) -> None:
     cli._notify_run_outcome(config, [recorder], RunReport(), state, now=NOW)
     assert recorder.sent == []
     assert state.last_heartbeat == fresh
+
+
+# -- anomalies are not "success" ------------------------------------------
+
+
+def anomaly_report() -> RunReport:
+    report = RunReport(posts_seen=4, posts_relevant=0)
+    report.anomalies.append("keyword gate matched none of 4 scraped post(s)")
+    return report
+
+
+def test_anomaly_notification_is_sent_even_with_no_calendar_changes(tmp_path: Path) -> None:
+    """The quiet failure: nothing changed *because* nothing was recognised."""
+    recorder = RecordingNotifier()
+    cli._notify_run_outcome(notify_config(tmp_path), [recorder], anomaly_report(), State(), now=NOW)
+    assert len(recorder.sent) == 1
+    assert "keyword gate" in recorder.sent[0]
+
+
+def test_anomaly_notification_can_be_turned_off(tmp_path: Path) -> None:
+    recorder = RecordingNotifier()
+    config = notify_config(tmp_path, on_anomalies=False)
+    cli._notify_run_outcome(config, [recorder], anomaly_report(), State(), now=NOW)
+    assert recorder.sent == []
+
+
+def test_run_exits_nonzero_on_anomaly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exit codes are the documented contract for cron and systemd."""
+    monkeypatch.setattr(cli, "_run_sync", lambda config, dry_run: anomaly_report())
+    assert cli.main(["--config", str(tmp_path / "config.toml")]) == cli.EXIT_ERROR
+
+
+def test_run_exits_zero_on_a_clean_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        cli, "_run_sync", lambda config, dry_run: RunReport(posts_seen=4, posts_relevant=4)
+    )
+    assert cli.main(["--config", str(tmp_path / "config.toml")]) == cli.EXIT_OK

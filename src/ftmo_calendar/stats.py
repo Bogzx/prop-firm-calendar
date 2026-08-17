@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -18,16 +19,20 @@ logger = logging.getLogger(__name__)
 
 _HISTORY_DAYS = 30
 _MAX_TRACKED_IDS = 10_000  # per day; cap memory on pathological traffic
+_FLUSH_SECONDS = 60.0  # at most one disk write per minute (see _maybe_save)
 
 
 class StatsStore:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, flush_seconds: float = _FLUSH_SECONDS) -> None:
         self._path = path
         self._lock = threading.Lock()
         self._days: dict[str, dict[str, int]] = {}
         self._today = ""
         self._seen_visitors: set[str] = set()
         self._seen_clients: set[str] = set()
+        self._flush_seconds = flush_seconds
+        self._dirty = False
+        self._last_flush = 0.0
         self._load()
 
     def record_page_view(self, visitor_id: str, now: datetime | None = None) -> None:
@@ -40,7 +45,7 @@ class StatsStore:
             ):
                 self._seen_visitors.add(visitor_id)
                 day["visitors"] += 1
-            self._save()
+            self._maybe_save()
 
     def record_feed_hit(self, client_hash: str, now: datetime | None = None) -> None:
         with self._lock:
@@ -49,11 +54,22 @@ class StatsStore:
             if client_hash not in self._seen_clients and len(self._seen_clients) < _MAX_TRACKED_IDS:
                 self._seen_clients.add(client_hash)
                 day["feed_clients"] += 1
-            self._save()
+            self._maybe_save()
+
+    def flush(self) -> None:
+        """Persist immediately if anything is pending."""
+        with self._lock:
+            if self._dirty:
+                self._save()
 
     def snapshot(self, now: datetime | None = None) -> dict:
         with self._lock:
             self._roll(now)
+            # Reading is rare (the status page and /stats) and is the natural
+            # moment to make the on-disk copy current without paying a write
+            # per request.
+            if self._dirty:
+                self._save()
             history = {key: dict(value) for key, value in self._days.items() if key != self._today}
             return {
                 "today": dict(self._days[self._today]),
@@ -104,7 +120,23 @@ class StatsStore:
             self._seen_visitors = set()
             self._seen_clients = set()
 
+    def _maybe_save(self) -> None:
+        """Debounced persist. Caller holds the lock.
+
+        Serializing every counter and fsync-replacing the file on each HTTP
+        request turned a request loop against the public feed into sustained
+        disk I/O — a free amplification vector on a small VPS. Counters live in
+        memory and reach disk at most once per flush window; the most that can
+        be lost to a hard kill is one window of counts.
+        """
+        self._dirty = True
+        elapsed = time.monotonic() - self._last_flush
+        if elapsed >= self._flush_seconds:
+            self._save()
+
     def _save(self) -> None:
+        self._dirty = False
+        self._last_flush = time.monotonic()
         payload = {
             "today": self._today,
             "days": self._days,

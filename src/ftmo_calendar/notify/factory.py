@@ -16,4 +16,8 @@ def make_notifiers(cfg: NotifyConfig) -> list[Notifier]:
         from ftmo_calendar.notify.telegram import TelegramNotifier
 
         notifiers.append(TelegramNotifier(cfg.telegram_bot_token, cfg.telegram_chat_id))
+    if cfg.webhook_url:
+        from ftmo_calendar.notify.webhook import WebhookNotifier
+
+        notifiers.append(WebhookNotifier(cfg.webhook_url))
     return notifiers

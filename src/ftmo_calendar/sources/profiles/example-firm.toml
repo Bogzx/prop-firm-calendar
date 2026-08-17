@@ -1,0 +1,58 @@
+# Template for a new prop firm. Copy, fill in, drop next to this file (or
+# anywhere and point [source] profile at the path), record a fixture under
+# tests/fixtures/<name>/, and you have a new source — no Python required.
+#
+#   [source]
+#   profile = "example-firm"
+#
+# How to fill it in:
+#   1. Open the firm's announcements index in a browser, View Source.
+#   2. Find the element wrapping the announcement prose. Prefer a class that
+#      names the content ("div.post-body") over a bare tag ("article") — a bare
+#      tag also matches teaser cards and navigation, and a wrong container is
+#      worse than an error because the LLM will extract from it regardless.
+#   3. Do the same on one detail page.
+#   4. Save both pages under tests/fixtures/<name>/ and add a parse test.
+#
+# Anything omitted falls back to the default in sources/profile.SourceProfile.
+
+name = "example-firm"
+display_name = "Example Prop Firm"
+url = "https://example.com/trading-announcements/"
+
+# --- index page ---------------------------------------------------------
+# Heading of the newest post if the index inlines it. Leave
+# listing_content_selectors empty when the index only links to posts.
+listing_title_selector = "h1"
+listing_title_contains = "trading update"
+listing_content_selectors = ["div.post-body"]
+
+# Cards/rows that link to older posts, and the substring their href must
+# contain (keeps nav, pagination and tracking links out).
+link_selectors = ["article.post-card", "li.post-list-item"]
+link_url_contains = "/announcements/"
+
+# --- detail page --------------------------------------------------------
+post_title_selector = "h1"
+post_content_selectors = ["div.post-body", "main div.content"]
+
+# Shorter than this is a teaser or a nav blob, not an announcement: raise.
+min_content_chars = 200
+
+# State identity prefix. Keep stable once deployed or every post looks new.
+post_key_prefix = "example-update"
+
+# Fixed IANA zone the firm states its times in when a post omits the offset.
+# Use an Etc/GMT±N zone for a platform time that does not observe DST (the sign
+# is inverted: Etc/GMT-3 is UTC+03:00).
+timezone = "Etc/GMT-3"
+
+keywords = ["maintenance", "market is closed", "holiday", "crypto"]
+
+# Appended to the extraction prompt: house vocabulary, symbol naming, and the
+# standing boilerplate the model should ignore.
+prompt_hints = """
+Times are stated in server time (UTC+2) unless the post says otherwise.
+Symbols look like "GER40", "XAUUSD". Every post repeats a risk-warning
+paragraph that describes no scheduled event; ignore it.
+"""

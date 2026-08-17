@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
-from ftmo_calendar.config import AppConfig
+from ftmo_calendar.config import AppConfig, EventRules
 from ftmo_calendar.models import SourcePost, TradingEvent
 from ftmo_calendar.parsing.llm import RawEvent
 from ftmo_calendar.parsing.validate import validate_events
@@ -39,15 +39,24 @@ class RunReport:
     dry_run: bool = False
     created_lines: list[str] = field(default_factory=list)
     deleted_lines: list[str] = field(default_factory=list)
+    #: Suspicious outcomes from a run that did not raise. A run can succeed
+    #: mechanically and still be wrong — the keyword gate matching nothing, or
+    #: extraction collapsing to zero events for a post that had some. Callers
+    #: surface these on /healthz and over the notification channels so a
+    #: quietly broken sync cannot pass for a working one.
+    anomalies: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
         prefix = "[dry-run] " if self.dry_run else ""
-        return (
+        text = (
             f"{prefix}posts: {self.posts_seen} seen, {self.posts_relevant} relevant, "
             f"{self.posts_skipped_unchanged} unchanged | events: {self.events_created} created, "
             f"{self.events_deleted} removed, {self.events_kept} kept, "
             f"{self.rejections} rejected extractions"
         )
+        if self.anomalies:
+            text += f" | {len(self.anomalies)} anomaly/anomalies: " + "; ".join(self.anomalies)
+        return text
 
 
 def run_pipeline(
@@ -92,13 +101,36 @@ def run_pipeline(
         for rejection in rejections:
             logger.warning("Rejected extraction for %s: %s", post.post_key, rejection.reason)
 
-        new_post_state = _reconcile(post, events, post_state, sink, report, dry_run, now)
+        new_post_state = _reconcile(
+            post, events, post_state, sink, report, dry_run, now, config.events
+        )
         if not dry_run:
             state.posts[post.post_key] = new_post_state
+
+    _detect_anomalies(report, config.source.keywords)
 
     if not dry_run:
         state.prune(now=now)
     return report
+
+
+def _detect_anomalies(report: RunReport, keywords: tuple[str, ...]) -> None:
+    """Flag whole-run outcomes that mean the source moved rather than went quiet.
+
+    Posts exist but none of them matched a keyword: either FTMO reworded (the
+    gate looks for "maintenance", so an announcement titled "scheduled
+    downtime" passes straight through) or the scraper is now reading the wrong
+    part of a redesigned page. Both empty the calendar while every step
+    reports success.
+    """
+    if report.posts_seen > 0 and report.posts_relevant == 0:
+        message = (
+            f"keyword gate matched none of {report.posts_seen} scraped post(s) — "
+            f"the announcement wording or the page structure may have changed "
+            f"(keywords: {', '.join(keywords)})"
+        )
+        logger.error("%s", message)
+        report.anomalies.append(message)
 
 
 def _describe_event(event: TradingEvent) -> str:
@@ -129,6 +161,14 @@ def _is_relevant(post: SourcePost, keywords: tuple[str, ...]) -> bool:
     return any(k.strip().lower() in text for k in keywords if k.strip())
 
 
+def _future(tracked: TrackedEvent, now: datetime) -> bool:
+    """True when a tracked event has not ended yet (naive timestamps read as UTC)."""
+    end_dt = datetime.fromisoformat(tracked.end)
+    if end_dt.tzinfo is None:
+        end_dt = end_dt.replace(tzinfo=UTC)
+    return end_dt > now
+
+
 def _reconcile(
     post: SourcePost,
     events: list[TradingEvent],
@@ -137,18 +177,37 @@ def _reconcile(
     report: RunReport,
     dry_run: bool,
     now: datetime,
+    rules: EventRules,
 ) -> PostState:
     old = {e.event_key: e for e in (post_state.events if post_state else [])}
     new_keys = {e.event_key for e in events}
     tracked: list[TrackedEvent] = []
 
+    if old and not events and not rules.delete_on_empty_extraction:
+        # A post that produced events now produces none. A genuine withdrawal
+        # looks identical to a degraded extraction (a typo fix that confused the
+        # model, a truncated fetch, a prompt regression) — and the degraded case
+        # is far more likely. Deleting is irreversible for subscribers who have
+        # already planned around the window, so keep every tracked event and
+        # raise an anomaly for a human to judge. Set
+        # [events] delete_on_empty_extraction = true to restore the old behavior.
+        pending = [e for e in old.values() if _future(e, now)]
+        message = (
+            f"post {post.post_key} previously extracted {len(old)} event(s) and now extracts "
+            f"none — refusing to delete {len(pending)} future event(s); "
+            "verify the announcement was really withdrawn"
+        )
+        logger.error("%s", message)
+        report.anomalies.append(message)
+        report.events_kept += len(old)
+        return PostState(
+            content_hash=post.content_hash, last_seen=now.isoformat(), events=list(old.values())
+        )
+
     for key, old_event in old.items():
         if key in new_keys:
             continue
-        end_dt = datetime.fromisoformat(old_event.end)
-        if end_dt.tzinfo is None:
-            end_dt = end_dt.replace(tzinfo=UTC)
-        if end_dt <= now:
+        if not _future(old_event, now):
             tracked.append(old_event)  # it happened; preserve calendar history
             continue
         logger.info("Announcement changed: removing stale event %s", key)

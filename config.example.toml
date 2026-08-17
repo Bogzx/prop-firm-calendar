@@ -2,9 +2,19 @@
 # Copy to config.toml and edit. Secrets do NOT go here; put them in .env.
 
 [source]
+profile = "ftmo"                # which prop firm: a TOML file in
+                                # src/ftmo_calendar/sources/profiles/, or a path
+                                # to your own. See example-firm.toml there for a
+                                # template — a new firm needs no Python.
 url = "https://ftmo.com/en/trading-updates/"
 keywords = ["maintenance", "market is closed", "ctrader", "holiday", "crypto"]
-timezone = "Europe/Bucharest"   # assumed when the announcement states no offset
+timezone = "Etc/GMT-3"          # assumed when the announcement states no offset.
+                                # FTMO writes every post in MetaTrader platform
+                                # time, a FIXED GMT+3. Do not use a DST-observing
+                                # civil zone like Europe/Bucharest here: it is
+                                # GMT+2 all winter, which parses announcements an
+                                # hour early. Etc/GMT-3 means UTC+03:00 (the sign
+                                # in Etc/ zone names is inverted).
 max_posts = 4                   # how many recent posts to process per run
 max_age_days = 14               # ignore posts older than this
 
@@ -28,15 +38,20 @@ enabled = true                  # false = feed-only mode: serve/write an ICS fee
 auth_mode = "oauth"             # "oauth" (desktop) or "service_account" (servers; never expires)
 name = "Trading"                # calendar found-or-created in oauth mode
 calendar_id = ""                # REQUIRED for service_account; optional override for oauth
-timezone = "Europe/Bucharest"
+timezone = "Etc/GMT-3"          # the feed's wall-clock times; keep it the same fixed
+                                # GMT+3 the announcements are written in
 reminders_minutes = [60, 10]    # popup reminders before each event
 
 [notify]
 on_events = true                # message when events are created/removed
 on_errors = true                # message when a run fails
+on_anomalies = true             # message when a run "succeeds" but looks wrong:
+                                # the keyword gate matching nothing, or a post's
+                                # extraction collapsing to zero events
 heartbeat_hours = 0             # e.g. 24 = daily "I'm alive" ping; 0 = off
 # Channels activate via env vars (see .env.example):
-#   DISCORD_WEBHOOK_URL, or TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID
+#   DISCORD_WEBHOOK_URL, TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID, or WEBHOOK_URL
+#   (a generic JSON POST — Slack/Mattermost incoming webhooks, n8n, your own)
 
 [ics]
 enabled = false                 # also write an .ics feed file every run
@@ -45,14 +60,29 @@ path = "ftmo-events.ics"
 [serve]
 host = "0.0.0.0"                # used by `ftmo-calendar serve`
 port = 8080
-sync_interval_minutes = 360     # sync every 6 hours
+sync_interval_minutes = 360     # sync every 6 hours. /healthz returns 503 once a
+                                # successful sync is more than 2 intervals old.
 
 [events]
 max_duration_hours = 48         # sanity cap; longer extractions are rejected
 max_days_ahead = 120
+reject_low_confidence = false   # true = drop extractions the model flagged as a
+                                # guess, instead of publishing them marked
+low_confidence_marker = "(unconfirmed)"   # appended to a low-confidence title
+delete_on_empty_extraction = false        # true restores pre-audit behaviour: a
+                                # post whose extraction collapses to zero events
+                                # deletes every future event it had created.
+                                # Off by default — a degraded extraction looks
+                                # exactly like a withdrawn announcement, and only
+                                # one of the two is recoverable.
 
 [events.summaries]
-maintenance = "⚠️ FTMO Platform Maintenance"
-crypto_closure = "🚫 Crypto Market Closed"
-holiday_hours = "🕒 Modified Trading Hours"
+# Titles per event type. Defaults shown; override any subset.
+maintenance = "⚠️ Platform Maintenance"
+crypto_closure = "🚫 Crypto Closed"
+holiday_closure = "🏖️ Closed All Day"
+early_close = "⏳ Early Close"
+late_open = "🕗 Late Open"
+symbol_event = "📌 Forced Action"
 other = "ℹ️ FTMO Trading Update"
+holiday_hours = "🕒 Modified Trading Hours"   # legacy: pre-0.8 state files only

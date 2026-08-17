@@ -1,3 +1,4 @@
+import dataclasses
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -193,6 +194,133 @@ def test_irrelevant_post_skipped(tmp_path: Path) -> None:
     )
     assert extractor.calls == 0
     assert report.posts_relevant == 0
+
+
+def test_empty_extraction_never_deletes_future_events(tmp_path: Path) -> None:
+    """A degraded extraction must not wipe correct future events.
+
+    FTMO fixing a typo, a truncated fetch or a prompt regression all look
+    identical to a genuine withdrawal — and are far more likely. Deleting is
+    irreversible for a subscriber who has already planned around the window.
+    """
+    sink = FakeSink()
+    state = State(
+        posts={
+            POST.post_key: PostState(
+                content_hash="old-hash",
+                last_seen="2026-05-31T00:00:00+00:00",
+                events=[
+                    TrackedEvent("k1", "gid1", "2026-06-06T14:00:00+03:00", summary="Maintenance"),
+                    TrackedEvent("k2", "gid2", "2026-06-07T14:00:00+03:00", summary="Crypto"),
+                ],
+            )
+        }
+    )
+    report = run_pipeline(
+        source=FakeSource([POST]),
+        extractor=FakeExtractor([]),  # extraction collapsed to nothing
+        sink=sink,
+        state=state,
+        config=make_config(tmp_path),
+        now=NOW,
+    )
+    assert sink.deleted == []
+    assert report.events_deleted == 0
+    assert {e.event_key for e in state.posts[POST.post_key].events} == {"k1", "k2"}
+    assert report.anomalies and "refusing to delete" in report.anomalies[0]
+
+
+def test_empty_extraction_can_delete_when_explicitly_allowed(tmp_path: Path) -> None:
+    sink = FakeSink()
+    config = make_config(tmp_path)
+    config = dataclasses.replace(
+        config, events=dataclasses.replace(config.events, delete_on_empty_extraction=True)
+    )
+    state = State(
+        posts={
+            POST.post_key: PostState(
+                content_hash="old-hash",
+                last_seen="2026-05-31T00:00:00+00:00",
+                events=[TrackedEvent("k1", "gid1", "2026-06-06T14:00:00+03:00")],
+            )
+        }
+    )
+    report = run_pipeline(
+        source=FakeSource([POST]),
+        extractor=FakeExtractor([]),
+        sink=sink,
+        state=state,
+        config=config,
+        now=NOW,
+    )
+    assert sink.deleted == ["gid1"]
+    assert report.events_deleted == 1
+    assert report.anomalies == []
+
+
+def test_a_post_that_never_had_events_is_not_an_anomaly(tmp_path: Path) -> None:
+    """Most announcements schedule nothing; that is normal, not a regression."""
+    report = run_pipeline(
+        source=FakeSource([POST]),
+        extractor=FakeExtractor([]),
+        sink=FakeSink(),
+        state=State(),
+        config=make_config(tmp_path),
+        now=NOW,
+    )
+    assert report.anomalies == []
+
+
+def test_keyword_gate_matching_nothing_is_an_anomaly(tmp_path: Path) -> None:
+    """Posts exist but none is relevant: the wording or the page moved.
+
+    Without this the run exits 0, the heartbeat says alive, and the calendar
+    quietly empties as tracked events age out.
+    """
+    reworded = SourcePost(
+        post_key="p1",
+        title="Trading Update",
+        text="Scheduled downtime is planned for the platform this weekend.",
+        url="u",
+    )
+    report = run_pipeline(
+        source=FakeSource([reworded]),
+        extractor=FakeExtractor([RAW]),
+        sink=FakeSink(),
+        state=State(),
+        config=make_config(tmp_path),
+        now=NOW,
+    )
+    assert report.posts_seen == 1 and report.posts_relevant == 0
+    assert report.anomalies and "keyword gate" in report.anomalies[0]
+    assert "anomaly" in report.summary()
+
+
+def test_no_posts_at_all_is_not_a_keyword_anomaly(tmp_path: Path) -> None:
+    """An empty scrape is the scraper's error to raise, not the gate's."""
+    report = run_pipeline(
+        source=FakeSource([]),
+        extractor=FakeExtractor([RAW]),
+        sink=FakeSink(),
+        state=State(),
+        config=make_config(tmp_path),
+        now=NOW,
+    )
+    assert report.anomalies == []
+
+
+def test_some_relevant_posts_is_not_an_anomaly(tmp_path: Path) -> None:
+    boring = SourcePost(post_key="p2", title="t", text="nothing interesting here", url="u")
+    report = run_pipeline(
+        source=FakeSource([POST, boring]),
+        extractor=FakeExtractor([RAW]),
+        sink=FakeSink(),
+        state=State(),
+        config=make_config(tmp_path),
+        now=NOW,
+    )
+    assert report.posts_seen == 2 and report.posts_relevant == 1
+    assert report.anomalies == []
 
 
 def test_calendar_recovery_via_key_lookup(tmp_path: Path) -> None:

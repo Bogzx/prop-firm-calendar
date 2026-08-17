@@ -43,6 +43,7 @@ def test_persistence_roundtrip(tmp_path: Path) -> None:
     stats = StatsStore(path)
     stats.record_page_view("alice", now=DAY1)
     stats.record_feed_hit("client-a", now=DAY1)
+    stats.flush()  # writes are debounced; force the pending one out
     reloaded = StatsStore(path)
     today = reloaded.snapshot(now=DAY1)["today"]
     assert today["views"] == 1 and today["visitors"] == 1
@@ -65,6 +66,34 @@ def test_corrupt_file_starts_fresh(tmp_path: Path) -> None:
     stats = StatsStore(path)
     stats.record_page_view("alice", now=DAY1)
     assert stats.snapshot(now=DAY1)["today"]["views"] == 1
+
+
+def test_writes_are_debounced(tmp_path: Path) -> None:
+    """A request loop must not become a disk write per request.
+
+    Serializing and fsync-replacing stats.json on every HTTP hit made the
+    public feed an amplification vector: cheap request, expensive write.
+    """
+    path = tmp_path / "stats.json"
+    stats = StatsStore(path, flush_seconds=3600)
+    stats.record_page_view("first", now=DAY1)  # first write always lands
+    writes_after_first = path.read_text(encoding="utf-8")
+
+    for i in range(500):
+        stats.record_feed_hit(f"client-{i}", now=DAY1)
+
+    assert path.read_text(encoding="utf-8") == writes_after_first  # nothing hit disk
+    assert stats.snapshot(now=DAY1)["today"]["feed_hits"] == 500  # counts are exact
+    assert path.read_text(encoding="utf-8") != writes_after_first  # snapshot flushed
+
+
+def test_flush_persists_pending_counts(tmp_path: Path) -> None:
+    path = tmp_path / "stats.json"
+    stats = StatsStore(path, flush_seconds=3600)
+    stats.record_page_view("a", now=DAY1)
+    stats.record_page_view("b", now=DAY1)  # debounced
+    stats.flush()
+    assert StatsStore(path).snapshot(now=DAY1)["today"]["views"] == 2
 
 
 def test_history_kept_to_30_days(tmp_path: Path) -> None:

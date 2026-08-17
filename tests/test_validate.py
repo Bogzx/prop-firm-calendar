@@ -95,3 +95,51 @@ def test_granular_types_validate() -> None:
     for event_type in ("holiday_closure", "early_close", "late_open", "symbol_event"):
         events, rejections = run([raw(event_type=event_type)])
         assert rejections == [] and events[0].event_type.value == event_type
+
+
+# -- confidence -----------------------------------------------------------
+# The model is asked for it, consensus votes on it, and until now nothing read
+# it: a guess reached subscribers looking exactly as certain as a stated
+# maintenance window.
+
+
+def test_high_confidence_event_is_unmarked() -> None:
+    events, _ = run([raw()])
+    assert events[0].confidence == "high"
+    assert "unconfirmed" not in events[0].summary
+    assert "confidence" not in events[0].description.lower()
+
+
+def test_low_confidence_event_is_flagged_not_hidden() -> None:
+    events, _ = run([raw(confidence="low")])
+    [event] = events
+    assert event.confidence == "low"
+    assert event.summary.endswith("(unconfirmed)")
+    assert "LOW" in event.description
+    assert "https://ftmo.com/en/trading-updates/" in event.description  # source kept
+
+
+def test_low_confidence_marker_is_configurable() -> None:
+    events, _ = run([raw(confidence="low")], EventRules(low_confidence_marker="[guess]"))
+    assert events[0].summary.endswith("[guess]")
+
+
+def test_low_confidence_can_be_rejected_outright() -> None:
+    events, rejections = run([raw(confidence="low")], EventRules(reject_low_confidence=True))
+    assert events == []
+    assert "confidence" in rejections[0].reason
+
+
+def test_rejecting_low_confidence_keeps_high_confidence_events() -> None:
+    events, rejections = run(
+        [raw(), raw(start="2026-06-07T08:00:00", end="2026-06-07T14:00:00", confidence="low")],
+        EventRules(reject_low_confidence=True),
+    )
+    assert len(events) == 1 and len(rejections) == 1
+
+
+def test_confidence_does_not_change_event_identity() -> None:
+    """A confidence flicker between runs must not orphan a calendar entry."""
+    high, _ = run([raw()])
+    low, _ = run([raw(confidence="low")])
+    assert high[0].event_key == low[0].event_key

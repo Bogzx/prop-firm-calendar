@@ -16,6 +16,18 @@ from ftmo_calendar.state import State
 _MAX_PAST_ROWS = 6
 
 
+def _humanize(seconds: float) -> str:
+    """Compact age string: '4 min', '3 h', '12 d'."""
+    seconds = max(0.0, seconds)
+    if seconds < 90:
+        return f"{int(seconds)} s"
+    if seconds < 5400:
+        return f"{int(seconds // 60)} min"
+    if seconds < 172800:
+        return f"{int(seconds // 3600)} h"
+    return f"{int(seconds // 86400)} d"
+
+
 def _row(summary: str, start: str, end: str, state_cls: str) -> str:
     return (
         f'<tr class="{state_cls}">'
@@ -58,11 +70,37 @@ def render_page(state: State, snapshot: dict, stats: dict | None = None) -> byte
     )
 
     ok = bool(snapshot.get("ok"))
+    state_name = str(snapshot.get("status") or ("ok" if ok else "error"))
     health_cls = "ok" if ok else "err"
-    health_text = "OPERATIONAL" if ok else "SYNC ERROR"
+    health_text = {
+        "ok": "OPERATIONAL",
+        "error": "SYNC ERROR",
+        "stale": "SYNC STALE",
+        "anomaly": "NEEDS REVIEW",
+    }.get(state_name, "OPERATIONAL" if ok else "SYNC ERROR")
     last_error = snapshot.get("last_error") or ""
     error_line = (
         f'<p class="errline">last error: {html.escape(last_error)}</p>' if last_error else ""
+    )
+    anomalies = snapshot.get("anomalies") or []
+    if anomalies:
+        error_line += "".join(
+            f'<p class="errline">anomaly: {html.escape(str(a))}</p>' for a in anomalies
+        )
+
+    # Freshness is the trust signal: a green badge next to a three-week-old
+    # sync is exactly the reassurance nobody should be given.
+    age_seconds = snapshot.get("last_success_age_seconds")
+    if snapshot.get("last_success") is None:
+        freshness = "never"  # a running process is not a working one
+    elif isinstance(age_seconds, int | float):
+        freshness = f"{_humanize(float(age_seconds))} ago"
+    else:
+        freshness = "unknown"
+    source_name = snapshot.get("source") or "FTMO"
+    source_line = (
+        f'<span class="srcline">source: {html.escape(str(source_name))} · '
+        f"last successful sync {html.escape(freshness)}</span>"
     )
 
     def iso_or_dash(key: str) -> str:
@@ -188,6 +226,7 @@ footer time {{ color:var(--dim); }}
 footer a {{ color:var(--dim); text-decoration:none; border-bottom:1px solid var(--line); }}
 footer a:hover {{ color:var(--amber); }}
 .errline {{ color:var(--red); font-size:11px; margin-top:10px; width:100%; }}
+.srcline {{ color:var(--dim); }}
 .privacy {{ font-family:var(--serif); font-style:italic; }}
 @keyframes rise {{ from {{ opacity:0; transform:translateY(10px) }} to {{ opacity:1; transform:none }} }}
 @media (max-width:520px) {{
@@ -258,7 +297,8 @@ footer a:hover {{ color:var(--amber); }}
   <span>last sync {iso_or_dash("last_run")}</span>
   <span>next sync {iso_or_dash("next_run")}</span>
   <span>ok {snapshot.get("runs_ok", 0)} · failed {snapshot.get("runs_failed", 0)}</span>
-  <span>source: <a href="https://ftmo.com/en/trading-updates/" rel="noopener">ftmo.com</a></span>
+  {source_line}
+  <span>feed: <a href="https://ftmo.com/en/trading-updates/" rel="noopener">ftmo.com</a></span>
   <span><a href="https://github.com/Bogzx/ftmo-calendar" rel="noopener">open source</a> · not affiliated with FTMO</span>
   {stats_line}
   {error_line}
