@@ -112,3 +112,57 @@ def test_lint_tools_are_pinned_to_the_locked_versions() -> None:
         assert pin == f"{tool}=={locked[tool].strip()}", (
             f"{tool} pin {pin!r} disagrees with requirements.lock"
         )
+
+
+# -- shipped source profiles ----------------------------------------------
+
+
+def _shipped_profiles() -> list[str]:
+    from ftmo_calendar.sources.profile import available_profiles
+
+    return [n for n in available_profiles() if n != "example-firm"]
+
+
+def test_every_shipped_firm_is_listed_in_the_readme() -> None:
+    """A firm nobody can discover is a firm nobody benefits from.
+
+    The profiles directory is the source of truth; this fails when one is added
+    without telling anyone, which is how the FTMO-only framing survived having
+    a config-driven scraper in the first place.
+    """
+    readme = README.read_text(encoding="utf-8")
+    for name in _shipped_profiles():
+        assert f"`{name}`" in readme, f"profile {name!r} is shipped but not listed in README.md"
+
+
+def test_every_shipped_firm_is_offered_in_the_config_example() -> None:
+    example = CONFIG_EXAMPLE.read_text(encoding="utf-8")
+    for name in _shipped_profiles():
+        assert name in example, f"profile {name!r} is shipped but absent from config.example.toml"
+
+
+def test_every_shipped_firm_has_a_recorded_fixture() -> None:
+    """CONTRIBUTING promises parse tests run against pages the site really served."""
+    for name in _shipped_profiles():
+        listing = REPO / "tests" / "fixtures" / name / "listing.html"
+        assert listing.exists(), f"profile {name!r} ships without a recorded fixture"
+        head = listing.read_text(encoding="utf-8")[:400]
+        assert "Recorded from" in head, f"{listing} is not a recorded page"
+
+
+def test_every_shipped_firm_declares_a_timezone_decision() -> None:
+    """The project's core failure mode is a wrong hour; silence is not allowed.
+
+    Either the profile names the zone announcements are read in, or it declares
+    that no zone can be assumed and the announcement must state its own offset.
+    """
+    from zoneinfo import ZoneInfo
+
+    from ftmo_calendar.sources.profile import load_profile
+
+    for name in _shipped_profiles():
+        profile = load_profile(name)
+        assert profile.timezone, f"{name} states no timezone"
+        ZoneInfo(profile.timezone)  # raises if it is not a real zone
+        assert profile.post_key_prefix, f"{name} has no post_key_prefix"
+        assert profile.prompt_hints.strip(), f"{name} ships no prompt hints"
