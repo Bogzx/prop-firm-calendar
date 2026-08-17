@@ -15,12 +15,24 @@ from datetime import date
 
 import requests
 
+from ftmo_calendar.sources.politeness import (
+    USER_AGENT,
+    RateLimiter,
+    RobotsDisallowed,
+    RobotsPolicy,
+)
+
 logger = logging.getLogger(__name__)
 
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
-)
+__all__ = [
+    "USER_AGENT",
+    "FetchError",
+    "HttpFetcher",
+    "RobotsDisallowed",
+    "ScrapeError",
+    "parse_title_date",
+    "post_key_for",
+]
 
 _MONTHS = {
     name.lower(): i
@@ -79,17 +91,42 @@ def post_key_for(title: str, url: str, prefix: str = "trading-update") -> str:
 
 
 class HttpFetcher:
-    """GET with a browser user-agent, bounded retries and exponential backoff."""
+    """Polite GET: honest UA, robots.txt honoured, rate-limited, bounded retries.
 
-    def __init__(self, *, timeout: int = 30, retries: int = 3) -> None:
+    The politeness pieces are constructor-injected and default to shared,
+    process-wide instances so that every firm's scraper queues behind the same
+    per-host rate limiter and reuses one robots.txt fetch per host.
+    """
+
+    def __init__(
+        self,
+        *,
+        timeout: int = 30,
+        retries: int = 3,
+        user_agent: str = USER_AGENT,
+        robots: RobotsPolicy | None = None,
+        limiter: RateLimiter | None = None,
+        obey_robots: bool = True,
+    ) -> None:
         self.timeout = timeout
         self.retries = retries
+        self.user_agent = user_agent
+        self.obey_robots = obey_robots
+        self._robots = robots if robots is not None else shared_robots_policy(user_agent)
+        self._limiter = limiter if limiter is not None else shared_rate_limiter()
         self._session = requests.Session()
-        self._session.headers["User-Agent"] = USER_AGENT
+        self._session.headers["User-Agent"] = user_agent
 
     def get(self, url: str) -> str:
+        if self.obey_robots and not self._robots.allows(url):
+            raise RobotsDisallowed(
+                f"robots.txt at {url} disallows {self.user_agent!r}. "
+                "Refusing to fetch: this firm cannot be scraped politely, so it must "
+                "not be scraped at all."
+            )
         last: Exception | None = None
         for attempt in range(1, self.retries + 1):
+            self._limiter.wait(url, self._robots.crawl_delay(url) if self.obey_robots else None)
             try:
                 response = self._session.get(url, timeout=self.timeout)
                 if response.status_code == 429 or response.status_code >= 500:
@@ -104,3 +141,29 @@ class HttpFetcher:
                 if attempt < self.retries:
                     time.sleep(2**attempt)
         raise FetchError(f"could not fetch {url} after {self.retries} attempts: {last}")
+
+
+_shared_robots: dict[str, RobotsPolicy] = {}
+_shared_limiter: RateLimiter | None = None
+
+
+def shared_robots_policy(user_agent: str = USER_AGENT) -> RobotsPolicy:
+    """One robots.txt cache per user-agent, shared by every source in the process."""
+    policy = _shared_robots.get(user_agent)
+    if policy is None:
+        policy = RobotsPolicy(user_agent)
+        _shared_robots[user_agent] = policy
+    return policy
+
+
+def shared_rate_limiter() -> RateLimiter:
+    """One per-host rate limiter for the whole process.
+
+    Two firms on the same host (a marketing site and its help subdomain are
+    different hosts; a firm with two profiles is not) must not each get their
+    own budget — the host sees one client, so there is one limiter.
+    """
+    global _shared_limiter  # noqa: PLW0603 - process-wide singleton by design
+    if _shared_limiter is None:
+        _shared_limiter = RateLimiter()
+    return _shared_limiter
