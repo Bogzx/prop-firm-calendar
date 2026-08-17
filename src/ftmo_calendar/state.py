@@ -10,7 +10,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-STATE_VERSION = 3
+STATE_VERSION = 4
 _PRUNE_AFTER_DAYS = 45
 
 
@@ -29,12 +29,35 @@ class PostState:
     content_hash: str
     last_seen: str  # ISO 8601, timezone-aware
     events: list[TrackedEvent] = field(default_factory=list)
+    #: Profile name of the firm this post came from (v4). Empty on entries
+    #: written before multi-firm support; those were necessarily produced by
+    #: the single configured source, so readers attribute them to the first
+    #: configured firm rather than dropping them from filtered feeds. Deliberately
+    #: *not* part of TradingEvent.event_key — adding it would recompute every
+    #: existing key and orphan every event already in subscribers' calendars.
+    firm: str = ""
 
 
 @dataclass
 class State:
     posts: dict[str, PostState] = field(default_factory=dict)
     last_heartbeat: str | None = None  # ISO 8601 of the last heartbeat notification
+
+    def firm_of(self, post: PostState, default_firm: str = "") -> str:
+        """The firm a post belongs to, attributing pre-v4 entries to `default_firm`.
+
+        Callers pass the first configured firm. Any state written before
+        multi-firm support came from the one source that was configured, and
+        that source is what the first `[[firms]]` entry (or the derived
+        `[source]` firm) now is — so the attribution is not a guess. Without
+        it, an upgraded deployment's existing events would silently vanish from
+        every per-firm feed until each post happened to be re-scraped.
+        """
+        return post.firm or default_firm
+
+    def firms(self, default_firm: str = "") -> list[str]:
+        """Distinct firm names present in the state, sorted."""
+        return sorted({self.firm_of(p, default_firm) for p in self.posts.values()} - {""})
 
     def prune(self, now: datetime | None = None) -> None:
         """Drop posts not seen recently whose events have all ended."""
@@ -68,6 +91,7 @@ def load_state(path: Path) -> State:
             key: PostState(
                 content_hash=p["content_hash"],
                 last_seen=p["last_seen"],
+                firm=p.get("firm", ""),
                 events=[
                     TrackedEvent(
                         event_key=e["event_key"],

@@ -49,7 +49,14 @@ def validate_events(
     source_tz: ZoneInfo,
     calendar_tz: ZoneInfo,
     now: datetime | None = None,
+    require_stated_offset: bool = False,
 ) -> tuple[list[TradingEvent], list[Rejection]]:
+    """Normalize raw extractions into calendar events.
+
+    `require_stated_offset` turns the timezone fallback off for firms whose
+    platform clock matches no IANA zone (see SourceProfile). Such an event is
+    rejected rather than published at a guessed offset.
+    """
     now = now or datetime.now(UTC)
     events: list[TradingEvent] = []
     rejections: list[Rejection] = []
@@ -63,6 +70,16 @@ def validate_events(
             continue
 
         stated = _offset_tz(raw.stated_utc_offset) if raw.stated_utc_offset else None
+        naive = start.tzinfo is None or end.tzinfo is None
+        if require_stated_offset and stated is None and naive:
+            rejections.append(
+                Rejection(
+                    raw,
+                    "no UTC offset stated in the announcement and this source has no "
+                    "timezone that can be assumed — refusing to guess the hour",
+                )
+            )
+            continue
         if start.tzinfo is None:
             start = start.replace(tzinfo=stated or source_tz)
         if end.tzinfo is None:

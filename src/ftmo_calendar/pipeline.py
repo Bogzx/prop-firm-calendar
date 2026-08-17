@@ -29,6 +29,10 @@ class Extractor(Protocol):
 
 @dataclass
 class RunReport:
+    #: Profile name of the firm this report covers ("" for the legacy caller
+    #: that did not say). Used to label anomalies and per-firm health.
+    firm: str = ""
+    display_name: str = ""
     posts_seen: int = 0
     posts_relevant: int = 0
     posts_skipped_unchanged: int = 0
@@ -47,8 +51,14 @@ class RunReport:
     #: quietly broken sync cannot pass for a working one.
     anomalies: list[str] = field(default_factory=list)
 
+    @property
+    def label(self) -> str:
+        return self.display_name or self.firm or "source"
+
     def summary(self) -> str:
         prefix = "[dry-run] " if self.dry_run else ""
+        if self.firm:
+            prefix += f"{self.label}: "
         text = (
             f"{prefix}posts: {self.posts_seen} seen, {self.posts_relevant} relevant, "
             f"{self.posts_skipped_unchanged} unchanged | events: {self.events_created} created, "
@@ -69,11 +79,23 @@ def run_pipeline(
     config: AppConfig,
     dry_run: bool = False,
     now: datetime | None = None,
+    firm: str = "",
+    display_name: str = "",
+    source_timezone: str | None = None,
+    keywords: tuple[str, ...] | None = None,
+    require_stated_offset: bool = False,
 ) -> RunReport:
+    """Run one firm end to end.
+
+    `firm`, `source_timezone` and `keywords` are per-firm; omitted, they fall
+    back to `[source]`, which is exactly the single-firm behaviour that existed
+    before and keeps every current caller and test correct.
+    """
     now = now or datetime.now(UTC)
-    report = RunReport(dry_run=dry_run)
-    source_tz = ZoneInfo(config.source.timezone)
+    report = RunReport(dry_run=dry_run, firm=firm, display_name=display_name)
+    source_tz = ZoneInfo(source_timezone or config.source.timezone)
     calendar_tz = ZoneInfo(config.calendar.timezone)
+    gate = config.source.keywords if keywords is None else keywords
 
     posts = source.fetch()
     report.posts_seen = len(posts)
@@ -82,8 +104,12 @@ def run_pipeline(
         post_state = state.posts.get(post.post_key)
         if post_state is not None and not dry_run:
             post_state.last_seen = now.isoformat()
+            # Attribute on every sighting, not only on change: an unchanged post
+            # skips extraction below, and a state file written before multi-firm
+            # support would otherwise never gain a firm at all.
+            post_state.firm = firm or post_state.firm
 
-        if not _is_relevant(post, config.source.keywords):
+        if not _is_relevant(post, gate):
             logger.info("Post %s has no relevant keywords; skipping", post.post_key)
             continue
         report.posts_relevant += 1
@@ -96,7 +122,13 @@ def run_pipeline(
         logger.info("Post %s is new or changed; extracting events", post.post_key)
         raw_events = extractor.extract(post.text)
         events, rejections = validate_events(
-            raw_events, post, config.events, source_tz, calendar_tz, now=now
+            raw_events,
+            post,
+            config.events,
+            source_tz,
+            calendar_tz,
+            now=now,
+            require_stated_offset=require_stated_offset,
         )
         report.rejections += len(rejections)
         for rejection in rejections:
@@ -105,10 +137,11 @@ def run_pipeline(
         new_post_state = _reconcile(
             post, events, post_state, sink, report, dry_run, now, config.events
         )
+        new_post_state.firm = firm or (post_state.firm if post_state else "")
         if not dry_run:
             state.posts[post.post_key] = new_post_state
 
-    _detect_anomalies(report, config.source.keywords)
+    _detect_anomalies(report, gate)
 
     if not dry_run:
         state.prune(now=now)
@@ -118,15 +151,22 @@ def run_pipeline(
 def _detect_anomalies(report: RunReport, keywords: tuple[str, ...]) -> None:
     """Flag whole-run outcomes that mean the source moved rather than went quiet.
 
-    Posts exist but none of them matched a keyword: either FTMO reworded (the
-    gate looks for "maintenance", so an announcement titled "scheduled
+    Posts exist but none of them matched a keyword: either the firm reworded
+    (the gate looks for "maintenance", so an announcement titled "scheduled
     downtime" passes straight through) or the scraper is now reading the wrong
     part of a redesigned page. Both empty the calendar while every step
     reports success.
+
+    With several firms configured, this has to be judged *per firm*: nine
+    healthy sources averaged with one that has silently stopped matching still
+    look like a working calendar, and the tenth firm's subscribers are the ones
+    who get caught by an outage. Each firm's report carries its own anomalies
+    and the caller keeps them labelled.
     """
     if report.posts_seen > 0 and report.posts_relevant == 0:
+        where = f"{report.label}: " if report.firm else ""
         message = (
-            f"keyword gate matched none of {report.posts_seen} scraped post(s) — "
+            f"{where}keyword gate matched none of {report.posts_seen} scraped post(s) — "
             f"the announcement wording or the page structure may have changed "
             f"(keywords: {', '.join(keywords)})"
         )
@@ -197,9 +237,11 @@ def _reconcile(
     # old behavior.
     pending = [e for k, e in old.items() if k not in new_keys and _future(e, now)]
     if pending and not (new_keys - old.keys()) and not rules.delete_on_empty_extraction:
+        where = f"{report.label}: " if report.firm else ""
         message = (
-            f"post {post.post_key} previously extracted {len(old)} event(s) and now extracts "
-            f"{len(events)} with none new — refusing to delete {len(pending)} future event(s); "
+            f"{where}post {post.post_key} previously extracted {len(old)} event(s) and now "
+            f"extracts {len(events)} with none new — refusing to delete {len(pending)} "
+            "future event(s); "
             "verify the announcement was really withdrawn"
         )
         logger.error("%s", message)
