@@ -1,0 +1,38 @@
+{
+  "_source": "https://help.e8markets.com/en/articles/12122593",
+  "_recorded": "2026-08-17",
+  "_note": [
+    "Hand-derived from the recorded article text in listing.html. The Forex/Crypto table",
+    "gives eight instruments against one dated column, 'Friday - July 3rd'; seven of them",
+    "close at 20:00 and BRENT alone at 20:30, so they group into exactly two events.",
+    "The year comes from the futures line in the same post, '7/03/2026'. 3 July 2026 is",
+    "indeed a Friday.",
+    "",
+    "stated_utc_offset is '+03:00' on both, copied from the '(gmt+3)' the article prints on",
+    "every row. This source sets require_stated_offset, so that copied offset is the ONLY",
+    "thing that makes these events publishable — E8's server clock runs UTC+3 from the end",
+    "of March to the beginning of November, which is no IANA zone, so there is nothing safe",
+    "to fall back to. An E8 row without an offset is rejected, not guessed.",
+    "",
+    "The Futures section states no times of its own and only links to the CME schedule, so",
+    "it contributes no events."
+  ],
+  "events": [
+    {
+      "event_type": "early_close",
+      "start_time": "2026-07-03T20:00:00",
+      "end_time": "2026-07-03T23:59:00",
+      "stated_utc_offset": "+03:00",
+      "affected": "WTI, XAUUSD, XAGUSD, DOW, NIKKEI, NSDQ, SP",
+      "confidence": "high"
+    },
+    {
+      "event_type": "early_close",
+      "start_time": "2026-07-03T20:30:00",
+      "end_time": "2026-07-03T23:59:00",
+      "stated_utc_offset": "+03:00",
+      "affected": "BRENT",
+      "confidence": "high"
+    }
+  ]
+}

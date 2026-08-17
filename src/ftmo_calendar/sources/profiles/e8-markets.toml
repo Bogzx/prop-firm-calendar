@@ -1,0 +1,98 @@
+# E8 Markets — https://help.e8markets.com/en/articles/12122593
+#
+# Verified against the live page on 2026-08-17 (recorded in
+# tests/fixtures/e8-markets/). help.e8markets.com serves the identifying bot
+# User-Agent a plain 200. Its robots.txt allows this path and asks for
+# Crawl-delay: 1, which the fetcher honours.
+#
+# SHAPE: one rolling article. The numeric id 12122593 is stable; the slug
+# rotates monthly (`-july-holiday-trading-schedule`,
+# `-december-holiday-trading-schedule`, …) and the ID-only URL redirects to
+# whichever is current. The profile therefore points at the ID, which keeps
+# post identity stable while content_hash moves each month. Past months are
+# overwritten and unrecoverable, so this is poll-and-diff with no backfill.
+#
+# ---------------------------------------------------------------------------
+# TIMEZONE: this firm has NO correct IANA zone, and the profile says so.
+# ---------------------------------------------------------------------------
+# E8's own help article "Server time"
+# (https://help.e8markets.com/en/articles/10305202-server-time) states:
+#
+#   "The Server time is being changed to UTC + 2 at the beginning of November
+#    and to UTC + 3 at the end of March"
+#
+# A January 2025 archived capture of that same article reads "Currently, the
+# server time is set to UTC + 2"; it reads UTC + 3 today. So the clock is
+# seasonal — but the season is the common MT5-broker one, running UTC+3 from
+# the END OF MARCH to the BEGINNING OF NOVEMBER. That is not Europe/Athens,
+# which reverts on the last Sunday of October, and it is obviously not a fixed
+# Etc/GMT-3. Any zone we picked would be an hour wrong for roughly the week
+# between the last Sunday of October and the first Sunday of November.
+#
+# Rather than choose which week to be wrong in, this profile sets
+# require_stated_offset. Every row of every observed E8 schedule carries its
+# own offset — "WTI Early Close @ 20:00 (gmt+3)" — so the offset is read from
+# the announcement, and anything that omits one is REJECTED rather than
+# published at a guessed hour. `timezone` below is therefore never used for
+# these events; it is set to the observed summer value only so that the field
+# is not silently misleading if the flag is ever turned off.
+require_stated_offset = true
+
+name = "e8-markets"
+display_name = "E8 Markets"
+url = "https://help.e8markets.com/en/articles/12122593"
+
+listing_title_selector = "h1"
+listing_title_contains = "trading schedule"
+listing_content_selectors = ["article"]
+
+link_selectors = []
+
+post_title_selector = "h1"
+post_content_selectors = ["article"]
+
+# Intercom nests "Related Articles" inside <article>; see topstep.toml.
+strip_selectors = ["section.related_articles"]
+
+min_content_chars = 200
+post_key_prefix = "e8-schedule"
+
+timezone = "Etc/GMT-3"
+
+keywords = ["trading schedule", "early close", "holiday", "closed", "maintenance"]
+
+prompt_hints = """
+This firm publishes one monthly holiday trading schedule covering both its
+Forex/Crypto accounts and its Futures accounts.
+
+TIMES AND OFFSETS — the important part. Each row states its own offset inline
+and in lower case, e.g. "WTI Early Close @ 20:00 (gmt+3)". ALWAYS copy that
+offset into "stated_utc_offset" as "+03:00" (or "+02:00" when the post says
+gmt+2 — this firm's server clock changes twice a year and winter posts read
+gmt+2). If a row states no offset, still extract the event and leave
+"stated_utc_offset" null; it will be rejected downstream rather than published
+at a guessed hour, which is the intended outcome.
+
+The Forex/Crypto section is a table of instruments (WTI, BRENT, XAUUSD, XAGUSD,
+DOW, NIKKEI, NSDQ, SP) against a dated column such as "Friday - July 3rd".
+Take the DATE from that column header and the TIME from the cell. "Early Close
+@ HH:MM" is an early_close: start at the stated time, end 23:59:00 the same
+day. Group instruments that share a date and time into ONE event and list them
+in "affected".
+
+The Futures section usually states no times of its own — it says only that
+changes "can be seen below" and links out to the CME's own schedule. Do not
+invent futures events from that link; extract nothing for it.
+
+Note the year is often absent from the column header ("Friday - July 3rd") but
+present elsewhere in the post; use it. If the year genuinely cannot be
+determined, set confidence "low".
+"""
+
+notes = """
+Their monthly schedule was previously published as an IMAGE with the offset in
+the image title ("January Holiday Trading Schedule (GMT+2)"); the current
+article renders it as real text with per-row "(gmt+3)". If E8 ever reverts to
+images the scraped text will collapse and min_content_chars will raise, which
+is the correct failure — an image carries no extractable schedule.
+"""
