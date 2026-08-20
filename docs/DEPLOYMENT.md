@@ -154,8 +154,16 @@ Make the server follow `main` automatically: a systemd timer polls GitHub
 every 5 minutes and rebuilds only when there are new commits, using the
 repo's own `scripts/autodeploy.sh`.
 
+Run this **from inside the clone you actually deployed**. The unit has to name
+that directory, which is not necessarily `~/ftmo-calendar` — if you cloned it
+under another name, or a second stale clone exists, pointing the timer at the
+wrong one is a silent no-op: it fetches, resets and rebuilds a checkout nothing
+is running, reporting `Succeeded` every five minutes while the live container
+never moves.
+
 ```bash
 sudo usermod -aG docker $USER   # docker without sudo for the deploy user
+cd /path/to/your/clone && APP_DIR="$(pwd)"
 
 sudo tee /etc/systemd/system/ftmo-autodeploy.service >/dev/null <<EOF
 [Unit]
@@ -167,7 +175,7 @@ Wants=network-online.target
 Type=oneshot
 User=$USER
 Group=docker
-ExecStart=$HOME/ftmo-calendar/scripts/autodeploy.sh
+ExecStart=$APP_DIR/scripts/autodeploy.sh
 EOF
 
 sudo tee /etc/systemd/system/ftmo-autodeploy.timer >/dev/null <<'EOF'
@@ -185,6 +193,14 @@ EOF
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now ftmo-autodeploy.timer
+```
+
+Check it points where you think it does — the deployed directory is whatever
+Docker says it is, not whatever matches the repo name:
+
+```bash
+systemctl cat ftmo-autodeploy.service | grep ExecStart
+docker ps --format '{{.Names}}\t{{.Label "com.docker.compose.project.working_dir"}}'
 ```
 
 Watch deploys with `journalctl -u ftmo-autodeploy.service -f`. Note this

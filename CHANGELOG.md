@@ -49,6 +49,28 @@ ICS SHA-256 matches; pinned in `tests/test_ftmo_compatibility.py`).
   Only when *every* firm fails does the run fail — which, with one firm
   configured, is exactly the previous behaviour
 
+### Added — a status page that is natively multi-firm
+- **Firm filter chips** on the landing page, wired to the `?firms=` feed filter
+  that previously existed only for people willing to hand-write the URL. They
+  compose with the type chips, and with every box ticked the URL stays a bare
+  `/feed.ics` — the unfiltered feed is served straight from disk, so nobody is
+  moved onto the re-rendering path by visiting the page
+- **Firm badges in the schedule table.** With several firms merged into one
+  chronological list, a row reading "Platform maintenance" did not say whose.
+  The badge sits inside the event cell rather than in a fourth column, which
+  would be unreadable on a phone. Posts written before per-firm tracking are
+  attributed to the first configured firm rather than rendering blank
+- **Branding follows the firm list.** Title, header and meta description are
+  derived by the same rule as the calendar name (`ics.calendar_name`), so the
+  page heading and the name in a subscriber's calendar app cannot disagree: one
+  firm keeps that firm's name, several read "Prop Firm Trading Calendar". The
+  FTMO-specific upstream link and affiliation notice generalise with it
+- A single-firm deployment's page is visually unchanged — the only differences
+  in the rendered HTML are an unused CSS rule and the rewritten filter script
+- **Fixed a latent bug in that script**: it collected `.filters input` and read
+  `data-type` from every match, so adding a second filter axis to the same
+  container would have emitted `?types=null`. Selectors are now scoped per axis
+
 ### Added — scraping politely
 - **An honest User-Agent.** The scraper identified as Chrome 120; it now says
   `TradingCalendarBot` and links the project, so an operator who wants it to

@@ -319,6 +319,10 @@ def make_handler(
 
     valid_types = {t.value for t in EventType}
     known_firms = set(valid_firms or ())
+    # The first configured firm owns any state written before per-firm tracking
+    # — see State.firm_of. Without it the status page badges every pre-upgrade
+    # event as an unknown source.
+    default_firm = valid_firms[0] if valid_firms else ""
 
     # Rendering a filtered feed re-reads the state file and regenerates the
     # whole calendar including the VTIMEZONE bisection. The unfiltered feed is
@@ -460,7 +464,12 @@ def make_handler(
                         )
                     stats.record_page_view(visitor_id)
                     stats_snapshot = stats.snapshot()
-                body = render_page(load_state(state_path), status.snapshot(), stats_snapshot)
+                body = render_page(
+                    load_state(state_path),
+                    status.snapshot(),
+                    stats_snapshot,
+                    default_firm=default_firm,
+                )
                 self._respond(200, "text/html; charset=utf-8", body, extra_headers)
             else:
                 self._json(404, {"error": "not found"})

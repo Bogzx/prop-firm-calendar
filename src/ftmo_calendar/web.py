@@ -35,21 +35,63 @@ def _humanize(seconds: float) -> str:
     return f"{int(seconds // 86400)} d"
 
 
-def _row(summary: str, start: str, end: str, state_cls: str) -> str:
+def _row(summary: str, start: str, end: str, state_cls: str, firm_label: str = "") -> str:
+    # The badge sits inside the event cell rather than in a column of its own:
+    # a fourth column is unreadable on a phone, and a single-firm page must not
+    # grow one at all.
+    badge = f'<span class="fbadge">{html.escape(firm_label)}</span>' if firm_label else ""
     return (
         f'<tr class="{state_cls}">'
-        f'<td class="ev">{html.escape(summary)}</td>'
+        f'<td class="ev">{badge}{html.escape(summary)}</td>'
         f'<td><time data-iso="{html.escape(start)}">{html.escape(start)}</time></td>'
         f'<td><time data-iso="{html.escape(end)}">{html.escape(end)}</time></td>'
         f"</tr>"
     )
 
 
-def render_page(state: State, snapshot: dict, stats: dict | None = None) -> bytes:
+def _firm_titles(sources: list) -> dict[str, str]:
+    """Profile name -> display name, read off the per-firm health snapshot."""
+    titles = {}
+    for entry in sources:
+        name = str(entry.get("firm") or "")
+        if name:
+            titles[name] = str(entry.get("display_name") or name)
+    return titles
+
+
+def _page_title(sources: list) -> str:
+    """Name the page after what is actually in it.
+
+    Deliberately mirrors `ics.calendar_name`: the heading a visitor reads and
+    the calendar name their app shows come from the same rule, so the two can
+    never disagree. A one-firm deployment keeps that firm's name, which is what
+    makes this change invisible to every existing single-firm self-hoster.
+    """
+    if len(sources) > 1:
+        return "Prop Firm Trading Calendar"
+    if len(sources) == 1:
+        entry = sources[0]
+        return f"{entry.get('display_name') or entry.get('firm') or 'FTMO'} Trading Calendar"
+    return "FTMO Trading Calendar"  # no health data yet: keep the historical name
+
+
+def render_page(
+    state: State, snapshot: dict, stats: dict | None = None, *, default_firm: str = ""
+) -> bytes:
     now = datetime.now(UTC)
-    upcoming: list[tuple[datetime, str, str, str]] = []
-    past: list[tuple[datetime, str, str, str]] = []
+    # Per-source health drives the whole multi-firm presentation: branding,
+    # chips and badges all key off how many firms are actually configured.
+    sources = snapshot.get("sources") or []
+    titles = _firm_titles(sources)
+    multi = len(sources) > 1
+
+    upcoming: list[tuple[datetime, str, str, str, str]] = []
+    past: list[tuple[datetime, str, str, str, str]] = []
     for post in state.posts.values():
+        # `default_firm` attributes state written before per-firm tracking; without
+        # it every pre-upgrade event would render with a blank badge.
+        firm = state.firm_of(post, default_firm) if multi else ""
+        label = titles.get(firm, firm)
         for event in post.events:
             if not event.summary or not event.start:
                 continue
@@ -63,15 +105,18 @@ def render_page(state: State, snapshot: dict, stats: dict | None = None) -> byte
             except ValueError:
                 continue
             target = upcoming if end_dt > now else past
-            target.append((start_dt, event.summary, event.start, event.end))
+            target.append((start_dt, event.summary, event.start, event.end, label))
     upcoming.sort(key=lambda item: item[0])
     past.sort(key=lambda item: item[0], reverse=True)
 
     rows = [
-        _row(summary, start, end, "live" if start_dt <= now else "soon")
-        for start_dt, summary, start, end in upcoming
+        _row(summary, start, end, "live" if start_dt <= now else "soon", label)
+        for start_dt, summary, start, end, label in upcoming
     ]
-    rows += [_row(summary, start, end, "past") for _, summary, start, end in past[:_MAX_PAST_ROWS]]
+    rows += [
+        _row(summary, start, end, "past", label)
+        for _, summary, start, end, label in past[:_MAX_PAST_ROWS]
+    ]
     table_body = (
         "".join(rows) or '<tr><td colspan="3" class="empty">no events tracked yet</td></tr>'
     )
@@ -116,9 +161,8 @@ def render_page(state: State, snapshot: dict, stats: dict | None = None) -> byte
     # subscribers are precisely the people who then get caught by an outage.
     # Rendered only when there is more than one source, so a single-firm
     # deployment's page is unchanged.
-    sources = snapshot.get("sources") or []
     sources_section = ""
-    if len(sources) > 1:
+    if multi:
         cards = []
         for entry in sources:
             healthy = bool(entry.get("ok"))
@@ -144,6 +188,53 @@ def render_page(state: State, snapshot: dict, stats: dict | None = None) -> byte
             f'<section><h2>SOURCES</h2><div class="srcgrid">{"".join(cards)}</div></section>'
         )
 
+    # Branding is derived, never configured, so the heading a visitor reads and
+    # the calendar name their app shows are always the same claim.
+    firm_names = [titles[str(entry.get("firm"))] for entry in sources if entry.get("firm")]
+    page_title = _page_title(sources)
+    brand_sub = (
+        " · ".join(html.escape(name) for name in firm_names)
+        if multi
+        else "maintenance &amp; market closures · auto-synced"
+    )
+    subject = "prop firm" if multi else (firm_names[0] if firm_names else "FTMO")
+    meta_desc = (
+        f"Live calendar of {html.escape(subject)} maintenance windows and market closures. "
+        "Subscribe once — never get caught by a platform outage again."
+    )
+    if multi:
+        affiliation = "not affiliated with any listed firm"
+    elif firm_names:
+        affiliation = f"not affiliated with {html.escape(firm_names[0])}"
+    else:
+        affiliation = "not affiliated with FTMO"
+    # The upstream link is FTMO's only when FTMO is the only firm; with several,
+    # the SOURCES panel names them all and one link would misrepresent the rest.
+    feed_link = (
+        '<span>feed: <a href="https://ftmo.com/en/trading-updates/" rel="noopener">ftmo.com</a></span>'
+        if not sources or (len(sources) == 1 and sources[0].get("firm") == "ftmo")
+        else ""
+    )
+
+    # Firm chips drive the ?firms= filter the server already supports. Offered
+    # only when there is a choice to make: one firm means one checkbox, which is
+    # noise rather than a filter.
+    firm_filters = ""
+    if multi:
+        chips = "".join(
+            '<label><input type="checkbox" data-firm="{firm}" checked> {name}</label>'.format(
+                firm=html.escape(str(entry.get("firm"))),
+                name=html.escape(titles[str(entry.get("firm"))]),
+            )
+            for entry in sources
+            if entry.get("firm")
+        )
+        firm_filters = (
+            '<div class="filters">'
+            '<span class="hint">Only some firms? Untick — the URL updates:</span>'
+            f"{chips}</div>"
+        )
+
     def iso_or_dash(key: str) -> str:
         value = snapshot.get(key)
         return (
@@ -164,8 +255,8 @@ def render_page(state: State, snapshot: dict, stats: dict | None = None) -> byte
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Live calendar of FTMO maintenance windows and market closures. Subscribe once — never get caught by a platform outage again.">
-<title>FTMO Trading Calendar — next interruption</title>
+<meta name="description" content="{meta_desc}">
+<title>{html.escape(page_title)} — next interruption</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 \
 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📅</text></svg>">
 <style>
@@ -268,6 +359,9 @@ tr.soon td.ev {{ border-left:2px solid var(--amber); }}
 tr.live td.ev {{ border-left:2px solid var(--red); }}
 tr.live td.ev::after {{ content:" ● LIVE"; color:var(--red); font-size:10px; letter-spacing:.15em; }}
 tr.past {{ opacity:.38; }}
+.fbadge {{ display:inline-block; border:1px solid var(--line); color:var(--dim);
+  font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; padding:2px 6px;
+  margin-right:9px; vertical-align:1px; white-space:nowrap; }}
 td time {{ color:var(--dim); font-variant-numeric:tabular-nums; }}
 .empty {{ color:var(--faint); font-family:var(--serif); font-style:italic; }}
 
@@ -296,8 +390,8 @@ footer a:hover {{ color:var(--amber); }}
     <rect x="21.5" y="15" width="3.5" height="7" fill="#ffb02e"/>
     <path d="M23.25 11v4M23.25 22v4" stroke="#ffb02e" stroke-width="1.4"/>
   </svg>
-  <div class="brand">FTMO TRADING CALENDAR
-    <small>maintenance &amp; market closures · auto-synced</small></div>
+  <div class="brand">{html.escape(page_title).upper()}
+    <small>{brand_sub}</small></div>
   <div class="health {health_cls}"><span class="dot"></span>{health_text}</div>
 </header>
 
@@ -326,6 +420,7 @@ footer a:hover {{ color:var(--amber); }}
     <label><input type="checkbox" data-type="symbol_event" checked> SYMBOL EVENTS</label>
     <label><input type="checkbox" data-type="other" checked> OTHER</label>
   </div>
+  {firm_filters}
   <div class="apps">
     <div class="app"><b>GOOGLE CALENDAR</b>
       <span>Other calendars → + → From URL → paste the feed URL. Appears on your phone automatically.</span></div>
@@ -351,8 +446,8 @@ footer a:hover {{ color:var(--amber); }}
   <span>next sync {iso_or_dash("next_run")}</span>
   <span>ok {snapshot.get("runs_ok", 0)} · failed {snapshot.get("runs_failed", 0)}</span>
   {source_line}
-  <span>feed: <a href="https://ftmo.com/en/trading-updates/" rel="noopener">ftmo.com</a></span>
-  <span><a href="https://github.com/Bogzx/ftmo-calendar" rel="noopener">open source</a> · not affiliated with FTMO</span>
+  {feed_link}
+  <span><a href="https://github.com/Bogzx/ftmo-calendar" rel="noopener">open source</a> · {affiliation}</span>
   {stats_line}
   {error_line}
 </footer>
@@ -361,12 +456,23 @@ footer a:hover {{ color:var(--amber); }}
 (function () {{
   var urlEl = document.getElementById("feedurl");
   var webcalEl = document.getElementById("webcal");
-  var boxes = [].slice.call(document.querySelectorAll(".filters input"));
+  // Scoped per axis: both filter rows live in .filters, so an unscoped
+  // selector would read data-type off a firm checkbox and emit "?types=null".
+  var typeBoxes = [].slice.call(document.querySelectorAll(".filters input[data-type]"));
+  var firmBoxes = [].slice.call(document.querySelectorAll(".filters input[data-firm]"));
+  var boxes = typeBoxes.concat(firmBoxes);
+  function axis(group, attr, key) {{
+    var checked = group.filter(function (b) {{ return b.checked; }})
+                       .map(function (b) {{ return b.getAttribute(attr); }});
+    // Everything ticked means no filter at all: the bare /feed.ics is served
+    // straight from disk, and existing subscribers must stay on that path.
+    return (checked.length && checked.length < group.length)
+      ? key + "=" + checked.join(",") : "";
+  }}
   function feedQuery() {{
-    var checked = boxes.filter(function (b) {{ return b.checked; }})
-                       .map(function (b) {{ return b.getAttribute("data-type"); }});
-    return (checked.length && checked.length < boxes.length)
-      ? "?types=" + checked.join(",") : "";
+    var parts = [axis(typeBoxes, "data-type", "types"),
+                 axis(firmBoxes, "data-firm", "firms")].filter(Boolean);
+    return parts.length ? "?" + parts.join("&") : "";
   }}
   function refreshUrls() {{
     var qs = feedQuery();
