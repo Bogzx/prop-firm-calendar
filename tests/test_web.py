@@ -122,3 +122,144 @@ def test_humanize_boundaries() -> None:
     assert _humanize(7200) == "2 h"
     assert _humanize(3 * 86400) == "3 d"
     assert _humanize(-5) == "0 s"  # clock skew must not render "-1 s"
+
+
+# -- multi-firm UI ---------------------------------------------------------
+
+FTMO_SRC = {
+    "firm": "ftmo",
+    "display_name": "FTMO",
+    "ok": True,
+    "status": "ok",
+    "last_success": "2026-06-09T12:00:00+00:00",
+    "last_success_age_seconds": 900,
+}
+TOPSTEP_SRC = {
+    "firm": "topstep",
+    "display_name": "Topstep",
+    "ok": True,
+    "status": "ok",
+    "last_success": "2026-06-09T12:00:00+00:00",
+    "last_success_age_seconds": 900,
+}
+SINGLE = dict(SNAPSHOT, source="FTMO", sources=[FTMO_SRC])
+MULTI = dict(SNAPSHOT, source="FTMO, Topstep", sources=[FTMO_SRC, TOPSTEP_SRC])
+
+
+def state_of(pairs: list[tuple[str, TrackedEvent]]) -> State:
+    """One post per (firm, event) pair, so events carry firm attribution."""
+    return State(
+        posts={
+            f"p{i}": PostState(
+                content_hash=f"h{i}",
+                last_seen="2026-06-09T00:00:00+00:00",
+                events=[event],
+                firm=firm,
+            )
+            for i, (firm, event) in enumerate(pairs)
+        }
+    )
+
+
+def test_single_firm_keeps_firm_specific_branding() -> None:
+    """An FTMO-only deployment must look exactly as it did before multi-firm."""
+    page = render_page(State(), SINGLE).decode("utf-8")
+    assert "<title>FTMO Trading Calendar — next interruption</title>" in page
+    assert "FTMO TRADING CALENDAR" in page
+    assert "Prop Firm" not in page
+
+
+def test_multi_firm_uses_neutral_branding() -> None:
+    page = render_page(State(), MULTI).decode("utf-8")
+    assert "<title>Prop Firm Trading Calendar — next interruption</title>" in page
+    assert "PROP FIRM TRADING CALENDAR" in page
+    # the page must still name who is actually in it
+    assert "FTMO · Topstep" in page
+
+
+def test_multi_firm_meta_description_is_not_ftmo_specific() -> None:
+    page = render_page(State(), MULTI).decode("utf-8")
+    description = page.split('name="description" content="')[1].split('"')[0]
+    assert "FTMO" not in description
+
+
+def test_multi_firm_disclaimer_does_not_name_one_firm() -> None:
+    page = render_page(State(), MULTI).decode("utf-8")
+    assert "not affiliated with FTMO" not in page
+    assert "not affiliated" in page
+
+
+def test_multi_firm_renders_firm_chips() -> None:
+    page = render_page(State(), MULTI).decode("utf-8")
+    assert 'data-firm="ftmo"' in page
+    assert 'data-firm="topstep"' in page
+
+
+def test_single_firm_renders_no_firm_chips() -> None:
+    """One firm: a filter offering exactly one choice is noise.
+
+    Asserts no chip is *rendered* — the shared script always carries the
+    data-firm selector, which is static and harmless with an empty NodeList.
+    """
+    assert 'type="checkbox" data-firm' not in render_page(State(), SINGLE).decode("utf-8")
+
+
+def test_multi_firm_rows_carry_a_firm_badge() -> None:
+    page = render_page(
+        state_of(
+            [
+                ("ftmo", TrackedEvent("k1", "g1", end=iso(5), summary="Maintenance", start=iso(3))),
+                ("topstep", TrackedEvent("k2", "g2", end=iso(6), summary="Holiday", start=iso(4))),
+            ]
+        ),
+        MULTI,
+    ).decode("utf-8")
+    assert '<span class="fbadge">FTMO</span>Maintenance' in page
+    assert '<span class="fbadge">Topstep</span>Holiday' in page
+
+
+def test_single_firm_rows_have_no_badge() -> None:
+    page = render_page(
+        state_of([("ftmo", TrackedEvent("k1", "g1", end=iso(5), summary="Solo", start=iso(3)))]),
+        SINGLE,
+    ).decode("utf-8")
+    assert '<span class="fbadge">' not in page  # the rule exists in CSS; no element uses it
+    assert '<td class="ev">Solo</td>' in page
+
+
+def test_legacy_events_are_attributed_to_the_default_firm() -> None:
+    """Pre-multi-firm state has firm="" — it must not render a blank badge."""
+    page = render_page(
+        state_of([("", TrackedEvent("k1", "g1", end=iso(5), summary="Old event", start=iso(3)))]),
+        MULTI,
+        default_firm="ftmo",
+    ).decode("utf-8")
+    assert '<span class="fbadge">FTMO</span>Old event' in page
+    assert '<span class="fbadge"></span>' not in page
+
+
+def test_unknown_firm_falls_back_to_its_profile_name() -> None:
+    page = render_page(
+        state_of([("mystery", TrackedEvent("k", "g", end=iso(5), summary="X", start=iso(3)))]),
+        MULTI,
+    ).decode("utf-8")
+    assert '<span class="fbadge">mystery</span>X' in page
+
+
+def test_firm_badge_is_escaped() -> None:
+    sources = [FTMO_SRC, dict(TOPSTEP_SRC, firm="x", display_name="<script>")]
+    page = render_page(
+        state_of([("x", TrackedEvent("k", "g", end=iso(5), summary="X", start=iso(3)))]),
+        dict(MULTI, sources=sources),
+    ).decode("utf-8")
+    assert "<script>x</script>" not in page
+    assert "&lt;script&gt;" in page
+
+
+def test_feed_url_builder_scopes_its_selectors_per_axis() -> None:
+    """Both axes share the .filters container; an unscoped selector would read
+    data-type off a firm checkbox and emit '?types=null'."""
+    page = render_page(State(), MULTI).decode("utf-8")
+    assert ".filters input[data-type]" in page
+    assert ".filters input[data-firm]" in page
+    assert 'querySelectorAll(".filters input")' not in page
