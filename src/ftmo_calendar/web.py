@@ -447,7 +447,7 @@ footer a:hover {{ color:var(--amber); }}
   <span>ok {snapshot.get("runs_ok", 0)} · failed {snapshot.get("runs_failed", 0)}</span>
   {source_line}
   {feed_link}
-  <span><a href="https://github.com/Bogzx/ftmo-calendar" rel="noopener">open source</a> · {affiliation}</span>
+  <span><a href="https://github.com/Bogzx/prop-firm-calendar" rel="noopener">open source</a> · {affiliation}</span>
   {stats_line}
   {error_line}
 </footer>

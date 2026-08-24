@@ -5,7 +5,7 @@ Thanks for considering a contribution!
 ## Development setup
 
 ```bash
-git clone https://github.com/Bogzx/ftmo-calendar && cd ftmo-calendar
+git clone https://github.com/Bogzx/prop-firm-calendar && cd prop-firm-calendar
 python -m venv .venv && . .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e .[dev]
 ```
