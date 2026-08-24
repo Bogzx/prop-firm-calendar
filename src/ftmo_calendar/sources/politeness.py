@@ -33,9 +33,7 @@ logger = logging.getLogger(__name__)
 #: UA is what makes "please stop" possible without an IP ban, and what makes a
 #: robots.txt rule addressed to us actually reachable.
 PROJECT_UA_TOKEN = "TradingCalendarBot"
-USER_AGENT = (
-    f"Mozilla/5.0 (compatible; {PROJECT_UA_TOKEN}/1.0; +https://github.com/Bogzx/ftmo-calendar)"
-)
+USER_AGENT = f"Mozilla/5.0 (compatible; {PROJECT_UA_TOKEN}/1.0; +https://github.com/Bogzx/prop-firm-calendar)"
 
 #: Floor between two requests to the same host, unless robots.txt asks for more.
 DEFAULT_MIN_INTERVAL_SECONDS = 2.0

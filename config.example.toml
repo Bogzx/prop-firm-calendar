@@ -45,7 +45,7 @@ obey_robots = true                  # ask robots.txt and believe the answer. A
                                     # Only turn this off to scrape your OWN site.
 user_agent = ""                     # blank = the identifying default,
                                     # "…(compatible; TradingCalendarBot/1.0;
-                                    # +https://github.com/Bogzx/ftmo-calendar)".
+                                    # +https://github.com/Bogzx/prop-firm-calendar)".
                                     # Keep a contact URL in whatever you set.
 
 # ---------------------------------------------------------------------------

@@ -25,7 +25,7 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/Bogzx/ftmo-calendar"
+Repository = "https://github.com/Bogzx/prop-firm-calendar"
 
 [project.scripts]
 ftmo-calendar = "ftmo_calendar.cli:entry"

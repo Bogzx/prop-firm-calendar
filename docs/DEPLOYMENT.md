@@ -45,8 +45,8 @@ sudo ufw enable
 ## 3. Install the app
 
 ```bash
-git clone https://github.com/Bogzx/ftmo-calendar
-cd ftmo-calendar
+git clone https://github.com/Bogzx/prop-firm-calendar
+cd prop-firm-calendar
 mkdir data
 ```
 
@@ -155,7 +155,7 @@ every 5 minutes and rebuilds only when there are new commits, using the
 repo's own `scripts/autodeploy.sh`.
 
 Run this **from inside the clone you actually deployed**. The unit has to name
-that directory, which is not necessarily `~/ftmo-calendar` — if you cloned it
+that directory, which is not necessarily `~/prop-firm-calendar` — if you cloned it
 under another name, or a second stale clone exists, pointing the timer at the
 wrong one is a silent no-op: it fetches, resets and rebuilds a checkout nothing
 is running, reporting `Succeeded` every five minutes while the live container

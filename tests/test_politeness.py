@@ -52,7 +52,7 @@ def fake_robots(monkeypatch: pytest.MonkeyPatch):
 def test_user_agent_identifies_the_project_and_how_to_reach_it() -> None:
     """An operator who wants us to stop must be able to find out who we are."""
     assert PROJECT_UA_TOKEN in USER_AGENT
-    assert "github.com/Bogzx/ftmo-calendar" in USER_AGENT
+    assert "github.com/Bogzx/prop-firm-calendar" in USER_AGENT
     assert "Chrome" not in USER_AGENT, "no longer impersonating a browser"
 
 
