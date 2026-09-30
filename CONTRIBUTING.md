@@ -7,7 +7,8 @@ Thanks for considering a contribution!
 ```bash
 git clone https://github.com/Bogzx/prop-firm-calendar && cd prop-firm-calendar
 python -m venv .venv && . .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e .[dev]
+pip install -c requirements.lock -e .[dev]   # the versions CI and Docker use
+pipx install pre-commit && pre-commit install   # optional: gitleaks + ruff on commit
 ```
 
 ## Before opening a PR
@@ -20,6 +21,8 @@ mypy src
 pytest
 ```
 
+- Never commit a secret. CI's `secrets` job scans every new commit with
+  gitleaks and fails on a finding; see [SECURITY.md](SECURITY.md).
 - New behavior needs a test. The suite runs offline: scraping is tested against
   recorded HTML fixtures (`tests/fixtures/<profile>/`), LLM parsing against
   scripted backends, and the HTTP server against a real server on an ephemeral
@@ -53,7 +56,7 @@ A source is a TOML profile plus a fixture; no Python module is needed.
 
 1. Open an issue with the firm's announcements URL — source support is
    demand-driven and we'd like to record real demand before merging.
-2. Copy `src/ftmo_calendar/sources/profiles/example-firm.toml`, which documents
+2. Copy `src/prop_firm_calendar/sources/profiles/example-firm.toml`, which documents
    every field, and fill in the page's selectors.
 3. Record fixtures: `python scripts/record_fixtures.py --profile <name>`.
 4. Add parse tests against them (see `tests/test_source_profile.py` for a firm
@@ -99,3 +102,8 @@ it must produce. If you change the prompt, the event taxonomy or validation,
 expect it to fail — and update the pinned JSON deliberately, in the same commit,
 so the behaviour change is visible in the diff rather than discovered by a
 subscriber.
+
+The goldens prove validation, never the model. When you change the prompt or
+a profile's `prompt_hints`, also run `prop-firm-calendar eval` (see the
+README's Development section) against a real model — or ask a maintainer to
+trigger the **LLM eval** workflow — and include its Markdown summary in the PR.

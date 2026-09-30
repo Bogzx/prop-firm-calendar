@@ -1,7 +1,7 @@
 import pytest
 
-from ftmo_calendar.config import NotifyConfig
-from ftmo_calendar.notify.base import (
+from prop_firm_calendar.config import NotifyConfig
+from prop_firm_calendar.notify.base import (
     EventPayload,
     format_anomaly_message,
     format_error_message,
@@ -9,11 +9,11 @@ from ftmo_calendar.notify.base import (
     format_run_message,
     notify_all,
 )
-from ftmo_calendar.notify.discord import DiscordNotifier
-from ftmo_calendar.notify.factory import make_notifiers
-from ftmo_calendar.notify.telegram import TelegramNotifier
-from ftmo_calendar.notify.webhook import WebhookNotifier
-from ftmo_calendar.pipeline import RunReport
+from prop_firm_calendar.notify.discord import DiscordNotifier
+from prop_firm_calendar.notify.factory import make_notifiers
+from prop_firm_calendar.notify.telegram import TelegramNotifier
+from prop_firm_calendar.notify.webhook import WebhookNotifier
+from prop_firm_calendar.pipeline import RunReport
 
 
 def test_quiet_run_produces_no_message() -> None:
@@ -82,7 +82,7 @@ def test_discord_posts_content(monkeypatch: pytest.MonkeyPatch) -> None:
         calls.update(url=url, json=json, timeout=timeout)
         return FakeResponse()
 
-    import ftmo_calendar.notify.discord as discord_mod
+    import prop_firm_calendar.notify.discord as discord_mod
 
     monkeypatch.setattr(discord_mod.requests, "post", fake_post)
     DiscordNotifier("https://discord.com/api/webhooks/x").send("hello")
@@ -119,7 +119,7 @@ def test_webhook_posts_plain_text(monkeypatch: pytest.MonkeyPatch) -> None:
         calls.update(url=url, json=json, timeout=timeout)
         return FakeResponse()
 
-    import ftmo_calendar.notify.webhook as webhook_mod
+    import prop_firm_calendar.notify.webhook as webhook_mod
 
     monkeypatch.setattr(webhook_mod.requests, "post", fake_post)
     WebhookNotifier("https://hooks.example/abc").send("hello")
@@ -134,7 +134,7 @@ def test_webhook_push_carries_structured_events(monkeypatch: pytest.MonkeyPatch)
     class FakeResponse:
         def raise_for_status(self) -> None: ...
 
-    import ftmo_calendar.notify.webhook as webhook_mod
+    import prop_firm_calendar.notify.webhook as webhook_mod
 
     monkeypatch.setattr(
         webhook_mod.requests,
@@ -145,13 +145,13 @@ def test_webhook_push_carries_structured_events(monkeypatch: pytest.MonkeyPatch)
     report.created_lines.append("⚠️ Platform Maintenance — Sat 06 Jun 08:00–14:00")
     notify_all(
         [WebhookNotifier("https://hooks.example/abc")],
-        "📅 FTMO Calendar updated",
+        "📅 Trading calendar updated",
         EventPayload.from_report(report),
     )
     assert calls["json"]["kind"] == "events"
     assert calls["json"]["created"] == ["⚠️ Platform Maintenance — Sat 06 Jun 08:00–14:00"]
     assert calls["json"]["removed"] == []
-    assert "FTMO Calendar updated" in calls["json"]["text"]
+    assert "Trading calendar updated" in calls["json"]["text"]
 
 
 def test_plain_notifiers_still_get_only_text() -> None:
@@ -190,7 +190,7 @@ def test_telegram_posts_message(monkeypatch: pytest.MonkeyPatch) -> None:
         calls.update(url=url, data=data)
         return FakeResponse()
 
-    import ftmo_calendar.notify.telegram as telegram_mod
+    import prop_firm_calendar.notify.telegram as telegram_mod
 
     monkeypatch.setattr(telegram_mod.requests, "post", fake_post)
     TelegramNotifier("123:abc", "42").send("hello")

@@ -1,9 +1,9 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ftmo_calendar.config import AppConfig, CalendarConfig, EventRules, LLMConfig, SourceConfig
-from ftmo_calendar.models import EventType, TradingEvent
-from ftmo_calendar.sinks.null import StateOnlySink
+from prop_firm_calendar.config import AppConfig, CalendarConfig, EventRules, LLMConfig, SourceConfig
+from prop_firm_calendar.models import EventType, TradingEvent
+from prop_firm_calendar.sinks.null import StateOnlySink
 
 EVENT = TradingEvent(
     event_type=EventType.MAINTENANCE,
@@ -26,7 +26,7 @@ def test_state_only_sink_contract() -> None:
 
 def test_build_sink_dry_run_needs_no_credentials(tmp_path: Path) -> None:
     """A first-time user must be able to preview with zero Google setup."""
-    import ftmo_calendar.cli as cli
+    import prop_firm_calendar.cli as cli
 
     config = AppConfig(
         source=SourceConfig(),
@@ -40,7 +40,7 @@ def test_build_sink_dry_run_needs_no_credentials(tmp_path: Path) -> None:
 
 
 def test_build_sink_calendar_disabled(tmp_path: Path) -> None:
-    import ftmo_calendar.cli as cli
+    import prop_firm_calendar.cli as cli
 
     config = AppConfig(
         source=SourceConfig(),

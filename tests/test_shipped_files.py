@@ -11,7 +11,7 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-from ftmo_calendar.config import DEFAULT_SUMMARIES, ServeConfig, load_config
+from prop_firm_calendar.config import DEFAULT_SUMMARIES, ServeConfig, load_config
 
 REPO = Path(__file__).parent.parent
 CONFIG_EXAMPLE = REPO / "config.example.toml"
@@ -118,7 +118,7 @@ def test_lint_tools_are_pinned_to_the_locked_versions() -> None:
 
 
 def _shipped_profiles() -> list[str]:
-    from ftmo_calendar.sources.profile import available_profiles
+    from prop_firm_calendar.sources.profile import available_profiles
 
     return [n for n in available_profiles() if n != "example-firm"]
 
@@ -158,7 +158,7 @@ def test_every_shipped_firm_declares_a_timezone_decision() -> None:
     """
     from zoneinfo import ZoneInfo
 
-    from ftmo_calendar.sources.profile import load_profile
+    from prop_firm_calendar.sources.profile import load_profile
 
     for name in _shipped_profiles():
         profile = load_profile(name)
@@ -166,3 +166,20 @@ def test_every_shipped_firm_declares_a_timezone_decision() -> None:
         ZoneInfo(profile.timezone)  # raises if it is not a real zone
         assert profile.post_key_prefix, f"{name} has no post_key_prefix"
         assert profile.prompt_hints.strip(), f"{name} ships no prompt hints"
+
+
+def test_the_secret_scanner_pins_agree() -> None:
+    """CI and pre-commit must run the same gitleaks, and CI must verify its download."""
+    import re
+
+    ci = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    hooks = (REPO / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    version = re.search(r'GITLEAKS_VERSION: "([\d.]+)"', ci)
+    assert version, "ci.yml no longer pins GITLEAKS_VERSION"
+    assert f"rev: v{version.group(1)}" in hooks
+    assert re.search(r'GITLEAKS_SHA256: "[0-9a-f]{64}"', ci)
+    assert "sha256sum -c" in ci
+    # The allowlist is a single, known historical commit — nothing broader.
+    config = (REPO / ".gitleaks.toml").read_text(encoding="utf-8")
+    assert re.findall(r"[0-9a-f]{40}", config) == ["52240017a24655e565540a6c3ec011a6faf6d3b0"]
+    assert "paths" not in config and "regexes" not in config

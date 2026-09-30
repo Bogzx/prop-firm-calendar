@@ -28,9 +28,9 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from bs4 import BeautifulSoup, Comment  # noqa: E402
 
-from ftmo_calendar.sources.base import HttpFetcher  # noqa: E402
-from ftmo_calendar.sources.profile import load_profile  # noqa: E402
-from ftmo_calendar.sources.web import WebSource  # noqa: E402
+from prop_firm_calendar.sources.base import HttpFetcher  # noqa: E402
+from prop_firm_calendar.sources.profile import load_profile  # noqa: E402
+from prop_firm_calendar.sources.web import WebSource  # noqa: E402
 
 FIXTURE_ROOT = REPO_ROOT / "tests" / "fixtures"
 STRIP_TAGS = ("script", "style", "svg", "noscript")

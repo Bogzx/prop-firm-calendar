@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-import ftmo_calendar.cli as cli
-from ftmo_calendar.config import (
+import prop_firm_calendar.cli as cli
+from prop_firm_calendar.config import (
     AppConfig,
     CalendarConfig,
     EventRules,
@@ -12,9 +12,9 @@ from ftmo_calendar.config import (
     NotifyConfig,
     SourceConfig,
 )
-from ftmo_calendar.firms import FirmOutcome, MultiRunReport
-from ftmo_calendar.pipeline import RunReport
-from ftmo_calendar.state import State
+from prop_firm_calendar.firms import FirmOutcome, MultiRunReport
+from prop_firm_calendar.pipeline import RunReport
+from prop_firm_calendar.state import State
 
 NOW = datetime(2026, 6, 9, 12, 0, tzinfo=UTC)
 
@@ -184,3 +184,90 @@ def test_run_exits_zero_on_a_clean_run(tmp_path: Path, monkeypatch: pytest.Monke
         lambda config, dry_run: _sync_result(RunReport(posts_seen=4, posts_relevant=4)),
     )
     assert cli.main(["--config", str(tmp_path / "config.toml")]) == cli.EXIT_OK
+
+
+def test_the_written_feed_links_each_firm_to_its_own_page(tmp_path: Path) -> None:
+    """Regression: _write_feed passed config.source.url, FTMO's page, for every event."""
+    from prop_firm_calendar.config import load_config
+    from prop_firm_calendar.state import PostState, TrackedEvent
+
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[[firms]]\nprofile = "ftmo"\n[[firms]]\nprofile = "topstep"\n'
+        '[ics]\nenabled = true\npath = "feed.ics"\n',
+        encoding="utf-8",
+    )
+    config = load_config(path, env={})
+    event = TrackedEvent(
+        event_key="k1",
+        google_event_id="ics:k1",
+        end="2026-11-26T23:59:00-06:00",
+        summary="⏳ Early Close",
+        start="2026-11-26T11:45:00-06:00",
+        event_type="early_close",
+    )
+    # A pre-v5 entry: attributed to Topstep but carrying no URL of its own.
+    state = State(
+        posts={"topstep-holiday": PostState("h", NOW.isoformat(), [event], firm="topstep")}
+    )
+    cli._write_feed(config, state)
+    ics = (tmp_path / "feed.ics").read_text(encoding="utf-8")
+    assert "Source: https://help.topstep.com/" in ics
+    assert "ftmo.com" not in ics
+
+
+def test_a_profile_given_by_path_is_named_as_its_posts_are(tmp_path: Path) -> None:
+    """[[firms]] profile = './x.toml' labels posts 'x'; feeds and defaults must agree."""
+    from prop_firm_calendar.config import load_config
+    from prop_firm_calendar.sources.profile import PROFILE_DIR
+
+    custom = tmp_path / "myfirm.toml"
+    custom.write_text(
+        (PROFILE_DIR / "topstep.toml")
+        .read_text(encoding="utf-8")
+        .replace('name = "topstep"', 'name = "myfirm"'),
+        encoding="utf-8",
+    )
+    path = tmp_path / "config.toml"
+    path.write_text(f"[[firms]]\nprofile = '{custom.as_posix()}'\n", encoding="utf-8")
+    config = load_config(path, env={})
+    assert cli._default_firm(config) == "myfirm"
+    assert set(cli._firm_titles(config)) == {"myfirm"}
+
+
+def test_serve_wires_every_firm_into_the_feed_the_api_and_health(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The live code path: what `serve` hands the HTTP server, without serving."""
+    import prop_firm_calendar.server as server
+    from prop_firm_calendar.server import FeedSelection
+    from prop_firm_calendar.state import PostState, TrackedEvent, save_state
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        '[[firms]]\nprofile = "ftmo"\n[[firms]]\nprofile = "topstep"\n'
+        '[[firms]]\nprofile = "e8-markets"\nenabled = false\n[calendar]\nenabled = false\n',
+        encoding="utf-8",
+    )
+    event = TrackedEvent(
+        "k1", "ics:k1", "2026-11-26T23:59:00-06:00", "⏳ Early Close",
+        "2026-11-26T11:45:00-06:00", "early_close",
+    )  # fmt: skip
+    save_state(
+        State(posts={"topstep-holiday": PostState("h", NOW.isoformat(), [event], firm="topstep")}),
+        tmp_path / "state.json",
+    )
+    captured: dict = {}
+    monkeypatch.setattr(server, "serve_forever", lambda **kwargs: captured.update(kwargs) or 0)
+
+    assert cli.main(["--config", str(config_path), "serve", "--port", "9999"]) == 0
+    assert captured["port"] == 9999
+    assert captured["valid_firms"] == ["ftmo", "topstep"]  # disabled firms are not offered
+    assert captured["firm_titles"]["topstep"] == "Topstep"
+    assert captured["firm_urls"]["topstep"].startswith("https://help.topstep.com/")
+    assert captured["source_name"] == "FTMO, Topstep"
+    # Last-good data is published before the first sync, with per-firm links.
+    feed = (tmp_path / "ftmo-events.ics").read_text(encoding="utf-8").replace("\r\n ", "")
+    assert "Source: https://help.topstep.com/" in feed
+    filtered = captured["feed_renderer"](FeedSelection(firms=frozenset({"ftmo"}))).decode()
+    assert "BEGIN:VEVENT" not in filtered

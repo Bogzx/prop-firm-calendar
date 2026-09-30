@@ -1,0 +1,13 @@
+# Optional local hooks: `pipx install pre-commit && pre-commit install`.
+# CI runs the same checks (.github/workflows/ci.yml), so this only moves the
+# failure earlier — in particular, a secret caught here never reaches history.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1  # keep in step with GITLEAKS_VERSION in ci.yml
+    hooks:
+      - id: gitleaks
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.16  # keep in step with the ruff pin in pyproject.toml
+    hooks:
+      - id: ruff-check
+      - id: ruff-format

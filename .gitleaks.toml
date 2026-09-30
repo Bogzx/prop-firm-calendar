@@ -1,0 +1,16 @@
+# gitleaks configuration: the default rules, plus one allowlisted commit.
+#
+# Commit 5224001 (2025-08-16) hardcoded a Google (Gemini) API key in
+# check_models.py. It is in the public history and in both forks, so the key
+# must be treated as PUBLIC: revoking it is the only fix, and this allowlist is
+# not one. It exists only so that a full-history scan — which the CI job falls
+# back to when it cannot work out a commit range — does not fail forever on
+# history that cannot be changed. See SECURITY.md.
+title = "prop-firm-calendar"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Historical Gemini key in check_models.py (5224001). Revoke it; do not add to this list lightly."
+commits = ["52240017a24655e565540a6c3ec011a6faf6d3b0"]

@@ -1,8 +1,8 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ftmo_calendar.sinks.ics import render_ics, write_ics
-from ftmo_calendar.state import PostState, State, TrackedEvent
+from prop_firm_calendar.sinks.ics import render_ics, write_ics
+from prop_firm_calendar.state import PostState, State, TrackedEvent
 
 NOW = datetime(2026, 6, 9, 12, 0, tzinfo=UTC)
 
@@ -130,10 +130,17 @@ def test_no_refresh_hints_by_default() -> None:
     assert "REFRESH-INTERVAL" not in ics
 
 
+def unfold(ics: str) -> str:
+    """What every reader does first (RFC 5545 §3.1)."""
+    return ics.replace("\r\n ", "")
+
+
 def test_description_with_source_url() -> None:
-    ics = render_ics(make_state(), (), source_url="https://ftmo.com/en/trading-updates/", now=NOW)
+    ics = unfold(
+        render_ics(make_state(), (), source_url="https://ftmo.com/en/trading-updates/", now=NOW)
+    )
     assert "DESCRIPTION:Source: https://ftmo.com/en/trading-updates/" in ics
-    assert "AutoFtmoCalendar" in ics
+    assert "Created by prop-firm-calendar" in ics
 
 
 def crypto_event() -> TrackedEvent:
@@ -174,3 +181,102 @@ def test_typeless_legacy_events_appear_only_unfiltered() -> None:
 def test_filtered_calendar_is_named_after_filter() -> None:
     ics = render_ics(make_state(), (), types=frozenset({"maintenance"}), now=NOW)
     assert "X-WR-CALNAME:FTMO Trading Updates (maintenance)" in ics
+
+
+def _post(firm: str, key: str, url: str = "") -> PostState:
+    return PostState(
+        content_hash="h",
+        last_seen="2026-06-09T00:00:00+00:00",
+        firm=firm,
+        url=url,
+        events=[
+            TrackedEvent(
+                event_key=key,
+                google_event_id=f"g-{key}",
+                end="2026-06-10T14:00:00+03:00",
+                summary=f"{firm} event",
+                start="2026-06-10T08:00:00+03:00",
+                event_type="maintenance",
+            )
+        ],
+    )
+
+
+def _descriptions(ics: str) -> dict[str, str]:
+    """UID key -> DESCRIPTION line of that VEVENT."""
+    found: dict[str, str] = {}
+    for block in unfold(ics).split("BEGIN:VEVENT")[1:]:
+        lines = block.split("\r\n")
+        uid = next(line for line in lines if line.startswith("UID:"))[4:].split("@")[0]
+        found[uid] = next((line for line in lines if line.startswith("DESCRIPTION:Source")), "")
+    return found
+
+
+def test_each_event_links_to_its_own_firms_announcement() -> None:
+    """The combined feed linked every event to FTMO's page, Topstep's included."""
+    state = State(
+        posts={
+            "a": _post("ftmo", "k-ftmo", "https://ftmo.com/en/blog/trading-updates/x/"),
+            "b": _post("topstep", "k-top", "https://help.topstep.com/en/articles/1-holiday"),
+        }
+    )
+    ics = render_ics(state, (), source_url="https://ftmo.com/en/trading-updates/", now=NOW)
+    links = _descriptions(ics)
+    assert "https://ftmo.com/en/blog/trading-updates/x/" in links["k-ftmo"]
+    assert "https://help.topstep.com/en/articles/1-holiday" in links["k-top"]
+    assert "ftmo.com" not in links["k-top"]
+
+
+def test_a_pre_v5_post_without_a_url_falls_back_to_its_firms_page() -> None:
+    state = State(posts={"a": _post("e8-markets", "k-e8"), "b": _post("", "k-legacy")})
+    ics = render_ics(
+        state,
+        (),
+        source_url="https://ftmo.com/en/trading-updates/",
+        default_firm="ftmo",
+        firm_urls={
+            "e8-markets": "https://help.e8markets.com/en/articles/12122593",
+            "ftmo": "https://ftmo.com/en/trading-updates/",
+        },
+        now=NOW,
+    )
+    links = _descriptions(ics)
+    assert "help.e8markets.com" in links["k-e8"]
+    # Unattributed state belongs to the first configured firm (State.firm_of).
+    assert "https://ftmo.com/en/trading-updates/" in links["k-legacy"]
+
+
+def test_a_window_announced_by_two_posts_appears_once() -> None:
+    """Live: Labor Day early closes were in FTMO's feed twice, one per post."""
+    first, second = _post("ftmo", "k-first"), _post("ftmo", "k-second")
+    other_symbols = _post("ftmo", "k-other")
+    other_symbols.events[0].summary = "ftmo event — GER40.cash"
+    other_firm = _post("topstep", "k-topstep")
+    other_firm.events[0].summary = "ftmo event"
+    state = State(posts={"a": first, "b": second, "c": other_symbols, "d": other_firm})
+    uids = set(_descriptions(render_ics(state, (), now=NOW)))
+    assert uids == {"k-first", "k-other", "k-topstep"}
+
+
+def test_the_verified_quote_is_in_the_description_escaped() -> None:
+    post = _post("topstep", "k-q", "https://help.topstep.com/x")
+    post.events[0].evidence = "Thanksgiving; November 26, 11:45 CT"
+    ics = unfold(render_ics(State(posts={"a": post}), (), now=NOW))
+    assert (
+        "DESCRIPTION:\u201cThanksgiving\\; November 26\\, 11:45 CT\u201d\\n"
+        "Source: https://help.topstep.com/x\\nCreated by prop-firm-calendar"
+    ) in ics
+
+
+def test_long_lines_are_folded_at_75_octets_without_splitting_characters() -> None:
+    post = _post("topstep", "k-long", "https://help.topstep.com/" + "a" * 60)
+    post.events[0].summary = "🏖️ Closed All Day — " + "Équités ✓ " * 12
+    post.events[0].evidence = "Thanksgiving Thursday, November 26 11:45 CT — " * 4
+    ics = render_ics(State(posts={"a": post}), (60,), now=NOW)
+    physical = ics.split("\r\n")
+    assert max(len(line.encode("utf-8")) for line in physical) <= 75
+    assert any(line.startswith(" ") for line in physical)  # it did fold
+    # Unfolding restores exactly the logical lines.
+    logical = unfold(ics)
+    assert "SUMMARY:🏖️ Closed All Day — " + "Équités ✓ " * 11 + "Équités ✓" in logical
+    assert "Source: https://help.topstep.com/" + "a" * 60 in logical

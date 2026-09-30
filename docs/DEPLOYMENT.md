@@ -161,13 +161,17 @@ wrong one is a silent no-op: it fetches, resets and rebuilds a checkout nothing
 is running, reporting `Succeeded` every five minutes while the live container
 never moves.
 
+The unit is called `ftmo-autodeploy` (and the compose service `ftmo-calendar`)
+from before the project was renamed; the names are kept so existing
+deployments keep matching this guide. Nothing needs renaming on upgrade.
+
 ```bash
 sudo usermod -aG docker $USER   # docker without sudo for the deploy user
 cd /path/to/your/clone && APP_DIR="$(pwd)"
 
 sudo tee /etc/systemd/system/ftmo-autodeploy.service >/dev/null <<EOF
 [Unit]
-Description=Auto-deploy ftmo-calendar from GitHub main
+Description=Auto-deploy prop-firm-calendar from GitHub main
 After=network-online.target docker.service
 Wants=network-online.target
 
@@ -180,7 +184,7 @@ EOF
 
 sudo tee /etc/systemd/system/ftmo-autodeploy.timer >/dev/null <<'EOF'
 [Unit]
-Description=Poll GitHub for ftmo-calendar updates every 5 minutes
+Description=Poll GitHub for prop-firm-calendar updates every 5 minutes
 
 [Timer]
 OnBootSec=2min
@@ -203,10 +207,40 @@ systemctl cat ftmo-autodeploy.service | grep ExecStart
 docker ps --format '{{.Names}}\t{{.Label "com.docker.compose.project.working_dir"}}'
 ```
 
-Watch deploys with `journalctl -u ftmo-autodeploy.service -f`. Note this
-deploys whatever lands on `main` regardless of CI status — fine for a
-single-maintainer repo; use a GitHub-Actions-over-SSH deploy instead if you
-want CI-gated deploys.
+Watch deploys with `journalctl -u ftmo-autodeploy.service -f`.
+
+**Deploys wait for CI.** A new `origin/main` commit is deployed only once the
+`CI` workflow's newest run for that exact commit has succeeded;
+`scripts/ci_gate.py` asks the GitHub API (no token needed for a public repo).
+The journal then reads one of:
+
+| Journal line | Meaning | Unit result |
+| --- | --- | --- |
+| `waiting for CI on abc1234: 'CI' is in_progress …` | tests still running; retried next tick | success |
+| `CI passed for abc1234 …` then `deployed abc1234` | deployed | success |
+| `not deploying abc1234: 'CI' concluded failure …` | red commit; the old version keeps running | **failed** |
+| `not deploying abc1234: CI status unknown …` | GitHub unreachable or rate-limited | **failed** |
+| `deploy of abc1234 failed; back on def5678, will retry next tick` | `docker compose up --build` failed; the checkout was reset and the old version brought back up | **failed** |
+
+Upgrading needs no change to the unit above: the first deploy of this version
+is still made by the previous, ungated script, and every later one is gated.
+The host needs `python3` (present on stock Ubuntu/Debian) and outbound HTTPS
+to `api.github.com`. The unit sets no environment; to change the defaults add a
+drop-in with `sudo systemctl edit ftmo-autodeploy.service`:
+
+```ini
+[Service]
+# Deploy without waiting for CI (the old behaviour):
+Environment=AUTODEPLOY_REQUIRE_CI=0
+# Only if origin is not a github.com URL:
+Environment=AUTODEPLOY_REPO=Bogzx/prop-firm-calendar
+# Only if you hit the anonymous API limit (60 requests/hour; one check per
+# tick while a new commit waits is 12/hour):
+Environment=GITHUB_TOKEN=github_pat_...
+```
+
+A clone whose `origin` still points at the pre-rename `Bogzx/ftmo-calendar`
+URL works unchanged: GitHub redirects both git and the API.
 
 ## 7. Operating it
 
@@ -220,8 +254,12 @@ want CI-gated deploys.
 `/healthz` answers "is this feed trustworthy right now?", not "is the process
 up". It returns **503** when the last sync raised, when no successful sync has
 landed within twice `sync_interval_minutes`, or when a run completed but
-reported an anomaly (the keyword gate matching nothing, or a post's extraction
-losing events with none new extracted). A plain HTTP monitor on that URL is
+reported an anomaly (the keyword gate matching nothing, a post's extraction
+losing events with none new extracted, or validation rejecting an event the
+announcement contains). An anomaly lasts for the run that raised it; each
+entry in `sources` keeps `rejected_extractions` listed until the post changes,
+next to `events_upcoming` and `events_deferred`, so a firm that is green with
+0 upcoming events can be told apart from one whose rows were all rejected. A plain HTTP monitor on that URL is
 enough — no keyword matching needed. The JSON body carries the detail:
 
 ```json
