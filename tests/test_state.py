@@ -2,7 +2,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ftmo_calendar.state import PostState, State, TrackedEvent, load_state, save_state
+from prop_firm_calendar.state import PostState, State, TrackedEvent, load_state, save_state
 
 NOW = datetime(2026, 6, 9, tzinfo=UTC)
 

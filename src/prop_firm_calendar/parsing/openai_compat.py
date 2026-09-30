@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from openai import OpenAI, OpenAIError
 
-from ftmo_calendar.parsing.llm import BackendError
+from prop_firm_calendar.parsing.llm import BackendError
 
 
 class OpenAICompatBackend:

@@ -1,6 +1,6 @@
 """Hosted mode: periodic sync loop + HTTP server exposing the ICS feed.
 
-One person runs `ftmo-calendar serve` (or the Docker container); any trader
+One person runs `prop-firm-calendar serve` (or the Docker container); any trader
 subscribes to `http://host:port/feed.ics` from Google/Apple/Outlook calendar —
 no OAuth, no API keys on the subscriber side.
 
@@ -28,8 +28,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from ftmo_calendar.state import load_state
-from ftmo_calendar.stats import StatsStore
+from prop_firm_calendar.state import load_state
+from prop_firm_calendar.stats import StatsStore
 
 logger = logging.getLogger(__name__)
 
@@ -326,7 +326,7 @@ def make_handler(
     stats: StatsStore | None = None,
     valid_firms: Sequence[str] | None = None,
 ) -> type[BaseHTTPRequestHandler]:
-    from ftmo_calendar.models import EventType
+    from prop_firm_calendar.models import EventType
 
     valid_types = {t.value for t in EventType}
     known_firms = set(valid_firms or ())
@@ -365,7 +365,7 @@ def make_handler(
         return body
 
     class Handler(BaseHTTPRequestHandler):
-        server_version = "ftmo-calendar"  # don't advertise the Python version
+        server_version = "prop-firm-calendar"  # don't advertise the Python version
         sys_version = ""
 
         def log_message(self, format: str, *args) -> None:  # noqa: A002 - stdlib signature
@@ -458,7 +458,7 @@ def make_handler(
                     stats.record_feed_hit(self._client_hash())
                 self._serve_feed()
             elif path in ("/", "/status"):
-                from ftmo_calendar.web import render_page
+                from prop_firm_calendar.web import render_page
 
                 extra_headers: list[tuple[str, str]] = []
                 stats_snapshot = None
@@ -500,7 +500,7 @@ def check_writable(directory: Path) -> None:
     passes, and the feed quietly never updates — exactly the silent failure
     this tool exists to prevent.
     """
-    probe = directory / ".ftmo-calendar-write-test"
+    probe = directory / ".prop-firm-calendar-write-test"
     try:
         directory.mkdir(parents=True, exist_ok=True)
         probe.write_text("ok", encoding="utf-8")

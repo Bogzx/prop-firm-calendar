@@ -15,7 +15,7 @@ from datetime import date
 
 import requests
 
-from ftmo_calendar.sources.politeness import (
+from prop_firm_calendar.sources.politeness import (
     USER_AGENT,
     RateLimiter,
     RobotsDisallowed,

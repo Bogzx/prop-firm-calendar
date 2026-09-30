@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-import ftmo_calendar.cli as cli
-from ftmo_calendar.config import (
+import prop_firm_calendar.cli as cli
+from prop_firm_calendar.config import (
     AppConfig,
     CalendarConfig,
     EventRules,
@@ -12,9 +12,9 @@ from ftmo_calendar.config import (
     NotifyConfig,
     SourceConfig,
 )
-from ftmo_calendar.firms import FirmOutcome, MultiRunReport
-from ftmo_calendar.pipeline import RunReport
-from ftmo_calendar.state import State
+from prop_firm_calendar.firms import FirmOutcome, MultiRunReport
+from prop_firm_calendar.pipeline import RunReport
+from prop_firm_calendar.state import State
 
 NOW = datetime(2026, 6, 9, 12, 0, tzinfo=UTC)
 
@@ -188,8 +188,8 @@ def test_run_exits_zero_on_a_clean_run(tmp_path: Path, monkeypatch: pytest.Monke
 
 def test_the_written_feed_links_each_firm_to_its_own_page(tmp_path: Path) -> None:
     """Regression: _write_feed passed config.source.url, FTMO's page, for every event."""
-    from ftmo_calendar.config import load_config
-    from ftmo_calendar.state import PostState, TrackedEvent
+    from prop_firm_calendar.config import load_config
+    from prop_firm_calendar.state import PostState, TrackedEvent
 
     path = tmp_path / "config.toml"
     path.write_text(

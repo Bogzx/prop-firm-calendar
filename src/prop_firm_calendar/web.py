@@ -11,7 +11,7 @@ from __future__ import annotations
 import html
 from datetime import UTC, datetime
 
-from ftmo_calendar.state import State
+from prop_firm_calendar.state import State
 
 _MAX_PAST_ROWS = 6
 

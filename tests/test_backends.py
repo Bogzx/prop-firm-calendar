@@ -1,7 +1,7 @@
 import pytest
 
-from ftmo_calendar.config import ConfigError, LLMConfig
-from ftmo_calendar.parsing.factory import make_backend
+from prop_firm_calendar.config import ConfigError, LLMConfig
+from prop_firm_calendar.parsing.factory import make_backend
 
 
 def test_missing_api_key_rejected() -> None:

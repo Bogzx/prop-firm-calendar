@@ -1,6 +1,6 @@
 import pytest
 
-from ftmo_calendar.parsing.llm import (
+from prop_firm_calendar.parsing.llm import (
     BackendError,
     EventExtractor,
     ExtractionError,

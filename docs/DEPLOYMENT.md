@@ -161,13 +161,17 @@ wrong one is a silent no-op: it fetches, resets and rebuilds a checkout nothing
 is running, reporting `Succeeded` every five minutes while the live container
 never moves.
 
+The unit is called `ftmo-autodeploy` (and the compose service `ftmo-calendar`)
+from before the project was renamed; the names are kept so existing
+deployments keep matching this guide. Nothing needs renaming on upgrade.
+
 ```bash
 sudo usermod -aG docker $USER   # docker without sudo for the deploy user
 cd /path/to/your/clone && APP_DIR="$(pwd)"
 
 sudo tee /etc/systemd/system/ftmo-autodeploy.service >/dev/null <<EOF
 [Unit]
-Description=Auto-deploy ftmo-calendar from GitHub main
+Description=Auto-deploy prop-firm-calendar from GitHub main
 After=network-online.target docker.service
 Wants=network-online.target
 
@@ -180,7 +184,7 @@ EOF
 
 sudo tee /etc/systemd/system/ftmo-autodeploy.timer >/dev/null <<'EOF'
 [Unit]
-Description=Poll GitHub for ftmo-calendar updates every 5 minutes
+Description=Poll GitHub for prop-firm-calendar updates every 5 minutes
 
 [Timer]
 OnBootSec=2min

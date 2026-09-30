@@ -16,14 +16,14 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Tag
 
-from ftmo_calendar.models import SourcePost
-from ftmo_calendar.sources.base import (
+from prop_firm_calendar.models import SourcePost
+from prop_firm_calendar.sources.base import (
     HttpFetcher,
     ScrapeError,
     parse_title_date,
     post_key_for,
 )
-from ftmo_calendar.sources.profile import SourceProfile
+from prop_firm_calendar.sources.profile import SourceProfile
 
 logger = logging.getLogger(__name__)
 

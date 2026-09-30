@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from ftmo_calendar.config import ConfigError, load_config
+from prop_firm_calendar.config import ConfigError, load_config
 
 
 def test_defaults_without_config_file(tmp_path: Path) -> None:

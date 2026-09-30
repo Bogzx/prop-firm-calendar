@@ -13,15 +13,15 @@ from pathlib import Path
 
 import pytest
 
-from ftmo_calendar.config import AppConfig, ConfigError, FirmConfig, load_config
-from ftmo_calendar.firms import AllFirmsFailed, FirmOutcome, MultiRunReport, run_firms
-from ftmo_calendar.models import SourcePost
-from ftmo_calendar.parsing.llm import RawEvent
-from ftmo_calendar.sinks.ics import render_ics
-from ftmo_calendar.sinks.null import StateOnlySink
-from ftmo_calendar.sources.factory import ResolvedFirm, resolve_firm
-from ftmo_calendar.sources.profile import SourceProfile
-from ftmo_calendar.state import State
+from prop_firm_calendar.config import AppConfig, ConfigError, FirmConfig, load_config
+from prop_firm_calendar.firms import AllFirmsFailed, FirmOutcome, MultiRunReport, run_firms
+from prop_firm_calendar.models import SourcePost
+from prop_firm_calendar.parsing.llm import RawEvent
+from prop_firm_calendar.sinks.ics import render_ics
+from prop_firm_calendar.sinks.null import StateOnlySink
+from prop_firm_calendar.sources.factory import ResolvedFirm, resolve_firm
+from prop_firm_calendar.sources.profile import SourceProfile
+from prop_firm_calendar.state import State
 
 NOW = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
 
@@ -288,7 +288,7 @@ def test_a_run_report_labels_its_firm() -> None:
 
 
 def build_state() -> State:
-    from ftmo_calendar.state import PostState, TrackedEvent
+    from prop_firm_calendar.state import PostState, TrackedEvent
 
     def event(key: str, kind: str) -> TrackedEvent:
         return TrackedEvent(

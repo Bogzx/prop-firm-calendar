@@ -23,13 +23,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from ftmo_calendar.config import FTMO_PLATFORM_TZ, EventRules, SourceConfig, load_config
-from ftmo_calendar.parsing.llm import RawEvent
-from ftmo_calendar.parsing.validate import validate_events
-from ftmo_calendar.sinks.ics import render_ics
-from ftmo_calendar.sources.factory import resolve_firm
-from ftmo_calendar.sources.ftmo import FtmoSource
-from ftmo_calendar.state import PostState, State, TrackedEvent, load_state, save_state
+from prop_firm_calendar.config import FTMO_PLATFORM_TZ, EventRules, SourceConfig, load_config
+from prop_firm_calendar.parsing.llm import RawEvent
+from prop_firm_calendar.parsing.validate import validate_events
+from prop_firm_calendar.sinks.ics import render_ics
+from prop_firm_calendar.sources.factory import resolve_firm
+from prop_firm_calendar.sources.ftmo import FtmoSource
+from prop_firm_calendar.state import PostState, State, TrackedEvent, load_state, save_state
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ftmo"
 URL = "https://ftmo.com/en/blog/trading-updates/trading-update-21-may-2026/"
@@ -59,6 +59,23 @@ BASE_EVENT_KEYS = [
 BASE_POST_KEY = "trading-update-2026-05-21"
 BASE_CONTENT_HASH = "ff8a9aa853546e3d1a5e765342dfadb8b737b66e1720e681f436c625fd9f8ffa"
 BASE_ICS_SHA256 = "7e5402e7b1b8a7509a1a91e567e2fa22c8f1dcf0b9bf565e4d0152a149841485"
+
+# 0.9.0 renamed the project, which moved exactly two strings in the feed: the
+# PRODID and the "Created by" credit in each DESCRIPTION. Neither is identity —
+# apps match events on UID, which is untouched — and undoing just those two
+# substitutions reproduces BASE_ICS_SHA256 exactly (asserted below), so nothing
+# else in the bytes moved.
+CURRENT_ICS_SHA256 = "49adeee0acba1a8f4fec20b32b2652f1d9f7e725c28d54a87793b545f20ae12b"
+RENAMED = (
+    ("PRODID:-//Bogzx//prop-firm-calendar//EN", "PRODID:-//AutoFtmoCalendar//ftmo-calendar//EN"),
+    ("Created by prop-firm-calendar", "Created by AutoFtmoCalendar"),
+)
+
+
+def _as_before_the_rename(ics: str) -> str:
+    for new, old in RENAMED:
+        ics = ics.replace(new, old)
+    return ics
 
 
 def _events():
@@ -125,7 +142,7 @@ def test_firm_attribution_is_not_part_of_the_event_key() -> None:
     `firm` lives on PostState, never in TradingEvent.event_key. If it ever
     leaked in, every pre-existing event would rekey at once.
     """
-    from ftmo_calendar.models import TradingEvent
+    from prop_firm_calendar.models import TradingEvent
 
     fields = {f for f in TradingEvent.__dataclass_fields__}
     assert "firm" not in fields
@@ -145,14 +162,17 @@ def test_firm_attribution_is_not_part_of_the_event_key() -> None:
 
 
 def test_unfiltered_feed_is_byte_identical_to_the_base_branch() -> None:
-    digest = hashlib.sha256(_render(_state()).encode("utf-8")).hexdigest()
-    assert digest == BASE_ICS_SHA256
+    ics = _render(_state())
+    assert hashlib.sha256(ics.encode("utf-8")).hexdigest() == CURRENT_ICS_SHA256
+    # The rename is the only thing that moved.
+    legacy = _as_before_the_rename(ics)
+    assert hashlib.sha256(legacy.encode("utf-8")).hexdigest() == BASE_ICS_SHA256
 
 
 def test_feed_keeps_its_uids_and_calendar_name() -> None:
     ics = _render(_state())
     assert "X-WR-CALNAME:FTMO Trading Updates" in ics
-    assert "PRODID:-//AutoFtmoCalendar//ftmo-calendar//EN" in ics
+    assert "PRODID:-//Bogzx//prop-firm-calendar//EN" in ics
     for key in BASE_EVENT_KEYS:
         assert f"UID:{key}@ftmo-calendar" in ics
 
@@ -181,7 +201,7 @@ def test_a_pre_multifirm_state_file_loads_and_keeps_every_event(tmp_path: Path) 
     assert reloaded.posts[POST.post_key].firm == ""
     assert len(reloaded.posts[POST.post_key].events) == 8
     digest = hashlib.sha256(_render(reloaded).encode("utf-8")).hexdigest()
-    assert digest == BASE_ICS_SHA256
+    assert digest == CURRENT_ICS_SHA256
 
 
 def test_legacy_state_still_appears_in_a_per_firm_feed(tmp_path: Path) -> None:
@@ -249,7 +269,7 @@ def test_shipped_profiles_do_not_collide_on_post_keys() -> None:
     FTMO's prefix cannot change (it is baked into live state), so the check is
     that every other shipped profile stays clear of it.
     """
-    from ftmo_calendar.sources.profile import available_profiles, load_profile
+    from prop_firm_calendar.sources.profile import available_profiles, load_profile
 
     prefixes = [load_profile(n).post_key_prefix for n in available_profiles()]
     assert len(prefixes) == len(set(prefixes)), f"duplicate post_key_prefix among {prefixes}"

@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from ftmo_calendar.server import FeedSelection, ServerStatus, make_handler, run_sync_loop
-from ftmo_calendar.sinks.ics import write_ics
-from ftmo_calendar.state import PostState, State, TrackedEvent, save_state
+from prop_firm_calendar.server import FeedSelection, ServerStatus, make_handler, run_sync_loop
+from prop_firm_calendar.sinks.ics import write_ics
+from prop_firm_calendar.state import PostState, State, TrackedEvent, save_state
 
 NOW = datetime(2026, 6, 9, 12, 0, tzinfo=UTC)
 
@@ -58,8 +58,8 @@ def server(tmp_path: Path):
     renders: list[frozenset[str] | None] = []
 
     def feed_renderer(selection: FeedSelection) -> bytes:
-        from ftmo_calendar.sinks.ics import render_ics
-        from ftmo_calendar.state import load_state
+        from prop_firm_calendar.sinks.ics import render_ics
+        from prop_firm_calendar.state import load_state
 
         renders.append(selection.types)
         return render_ics(
@@ -70,7 +70,7 @@ def server(tmp_path: Path):
             now=NOW,
         ).encode("utf-8")
 
-    from ftmo_calendar.stats import StatsStore
+    from prop_firm_calendar.stats import StatsStore
 
     handler = make_handler(
         ics_path=ics_path,
@@ -403,7 +403,7 @@ def test_sync_loop_accepts_a_sync_that_returns_nothing() -> None:
 def test_check_writable_rejects_an_unusable_data_dir(tmp_path: Path) -> None:
     """The Docker volume ownership trap: uid 1000 against a bind mount it does
     not own persists nothing while every healthcheck passes."""
-    from ftmo_calendar.server import DataDirError, check_writable
+    from prop_firm_calendar.server import DataDirError, check_writable
 
     blocker = tmp_path / "data"
     blocker.write_text("I am a file, not a directory", encoding="utf-8")
@@ -412,7 +412,7 @@ def test_check_writable_rejects_an_unusable_data_dir(tmp_path: Path) -> None:
 
 
 def test_check_writable_creates_a_missing_dir(tmp_path: Path) -> None:
-    from ftmo_calendar.server import check_writable
+    from prop_firm_calendar.server import check_writable
 
     target = tmp_path / "fresh"
     check_writable(target)

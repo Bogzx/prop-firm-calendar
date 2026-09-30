@@ -4,12 +4,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from ftmo_calendar.config import AppConfig, CalendarConfig, EventRules, LLMConfig, SourceConfig
-from ftmo_calendar.models import SourcePost, TradingEvent
-from ftmo_calendar.parsing.llm import RawEvent
-from ftmo_calendar.parsing.validate import validate_events
-from ftmo_calendar.pipeline import run_pipeline
-from ftmo_calendar.state import PostState, State, TrackedEvent, load_state, save_state
+from prop_firm_calendar.config import AppConfig, CalendarConfig, EventRules, LLMConfig, SourceConfig
+from prop_firm_calendar.models import SourcePost, TradingEvent
+from prop_firm_calendar.parsing.llm import RawEvent
+from prop_firm_calendar.parsing.validate import validate_events
+from prop_firm_calendar.pipeline import run_pipeline
+from prop_firm_calendar.state import PostState, State, TrackedEvent, load_state, save_state
 
 NOW = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
 

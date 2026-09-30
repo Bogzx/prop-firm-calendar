@@ -53,7 +53,7 @@ A source is a TOML profile plus a fixture; no Python module is needed.
 
 1. Open an issue with the firm's announcements URL — source support is
    demand-driven and we'd like to record real demand before merging.
-2. Copy `src/ftmo_calendar/sources/profiles/example-firm.toml`, which documents
+2. Copy `src/prop_firm_calendar/sources/profiles/example-firm.toml`, which documents
    every field, and fill in the page's selectors.
 3. Record fixtures: `python scripts/record_fixtures.py --profile <name>`.
 4. Add parse tests against them (see `tests/test_source_profile.py` for a firm

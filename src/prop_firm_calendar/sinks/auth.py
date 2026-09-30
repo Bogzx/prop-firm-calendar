@@ -3,7 +3,7 @@
 Two modes:
 - service_account: key file + calendar shared with the service account. Never
   expires, no browser — the right choice for servers and cron.
-- oauth: token.json produced by the explicit `ftmo-calendar auth` command.
+- oauth: token.json produced by the explicit `prop-firm-calendar auth` command.
   `run` NEVER starts an interactive flow (it would hang a headless cron run);
   it refreshes silently or fails with instructions.
 """
@@ -18,7 +18,7 @@ from google.auth.exceptions import GoogleAuthError, RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 
-from ftmo_calendar.config import CalendarConfig
+from prop_firm_calendar.config import CalendarConfig
 
 logger = logging.getLogger(__name__)
 
@@ -67,14 +67,14 @@ def _load_oauth(cfg: CalendarConfig, base_dir: Path):
     token_path = _resolve(base_dir, cfg.token_file)
     if not token_path.exists():
         raise AuthError(
-            f"No OAuth token at {token_path}. Run `ftmo-calendar auth` once on a machine "
+            f"No OAuth token at {token_path}. Run `prop-firm-calendar auth` once on a machine "
             "with a browser to authorize."
         )
     try:
         creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
     except ValueError as e:
         raise AuthError(
-            f"OAuth token {token_path} is corrupt: {e}. Run `ftmo-calendar auth`."
+            f"OAuth token {token_path} is corrupt: {e}. Run `prop-firm-calendar auth`."
         ) from e
     if creds.valid:
         return creds
@@ -84,13 +84,13 @@ def _load_oauth(cfg: CalendarConfig, base_dir: Path):
         except RefreshError as e:
             raise AuthError(
                 "OAuth token refresh failed (expired or revoked). "
-                f"Run `ftmo-calendar auth` to re-authorize.\n{_TESTING_MODE_TIP}"
+                f"Run `prop-firm-calendar auth` to re-authorize.\n{_TESTING_MODE_TIP}"
             ) from e
         token_path.write_text(creds.to_json(), encoding="utf-8")
         logger.info("Refreshed OAuth token")
         return creds
     raise AuthError(
-        f"OAuth token at {token_path} is not refreshable. Run `ftmo-calendar auth`.\n"
+        f"OAuth token at {token_path} is not refreshable. Run `prop-firm-calendar auth`.\n"
         f"{_TESTING_MODE_TIP}"
     )
 
@@ -114,7 +114,7 @@ def interactive_auth(cfg: CalendarConfig, base_dir: Path) -> Path:
 
 
 def describe_credentials(cfg: CalendarConfig, base_dir: Path) -> str:
-    """Human-readable status for `ftmo-calendar auth --check`."""
+    """Human-readable status for `prop-firm-calendar auth --check`."""
     if cfg.auth_mode == "service_account":
         key_path = _resolve(base_dir, cfg.service_account_file)
         if not key_path.exists():
@@ -122,14 +122,14 @@ def describe_credentials(cfg: CalendarConfig, base_dir: Path) -> str:
         return f"service_account: key file present at {key_path} (no expiry)"
     token_path = _resolve(base_dir, cfg.token_file)
     if not token_path.exists():
-        return f"oauth: NO token at {token_path} — run `ftmo-calendar auth`"
+        return f"oauth: NO token at {token_path} — run `prop-firm-calendar auth`"
     try:
         creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
     except ValueError:
-        return f"oauth: token at {token_path} is CORRUPT — run `ftmo-calendar auth`"
+        return f"oauth: token at {token_path} is CORRUPT — run `prop-firm-calendar auth`"
     expiry = creds.expiry.replace(tzinfo=UTC) if creds.expiry else None
     status = "valid" if creds.valid else "expired (will auto-refresh on next run)"
-    refresh = "yes" if creds.refresh_token else "NO — re-run `ftmo-calendar auth`"
+    refresh = "yes" if creds.refresh_token else "NO — re-run `prop-firm-calendar auth`"
     now = datetime.now(UTC)
     expiry_text = (
         f"{expiry.isoformat()} ({'past' if expiry and expiry < now else 'future'})"

@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
-from ftmo_calendar.state import PostState, State, TrackedEvent
-from ftmo_calendar.web import render_page
+from prop_firm_calendar.state import PostState, State, TrackedEvent
+from prop_firm_calendar.web import render_page
 
 SNAPSHOT = {
     "ok": True,
@@ -114,7 +114,7 @@ def test_anomalies_are_surfaced_and_escaped() -> None:
 
 
 def test_humanize_boundaries() -> None:
-    from ftmo_calendar.web import _humanize
+    from prop_firm_calendar.web import _humanize
 
     assert _humanize(0) == "0 s"
     assert _humanize(45) == "45 s"
