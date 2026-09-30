@@ -260,6 +260,7 @@ link to the event's own announcement in its description.
 - `GET /feed.ics` — the calendar feed (add it as "subscribe by URL")
 - `GET /status` — shareable page: next event, sync health, age of the last
   successful sync, subscribe how-to
+- `GET /api/v1/…` — read-only JSON API ([below](#json-api))
 - `GET /healthz` — JSON with `ok`, `status`, `last_run`, `last_success`,
   `last_success_age_seconds`, `stale`, `next_run`, `last_error`, `anomalies`,
   plus `sources` (per-firm health, including `events_upcoming`,
@@ -317,6 +318,54 @@ unknown firm returns a 400 listing the configured ones.
 Event titles carry the affected symbols, extracted from the announcement. The
 landing page has checkboxes that build the URL for you; unknown types return
 a 400 listing the valid ones.
+
+## JSON API
+
+`serve` mode also answers read-only JSON, so bots, order routers and dashboards
+can ask "is it safe to trade right now?" without parsing ICS. It is the same
+state and the same de-duplication as the feed (on the public instance from 0.9.0):
+
+```bash
+curl -s 'https://calendar.bogdantruta.com/api/v1/next'
+curl -s 'https://calendar.bogdantruta.com/api/v1/events?firm=topstep&type=early_close,holiday_closure&from=2026-11-01&to=2027-01-31'
+```
+
+| Endpoint | Returns |
+| --- | --- |
+| `GET /api/v1/` | endpoints, configured firms (`firm`, `firm_name`) and event types |
+| `GET /api/v1/events` | windows overlapping `[from, to)`, sorted by start |
+| `GET /api/v1/next` | per configured firm: the window in progress, else the next one — `next: null` when nothing is scheduled |
+
+Parameters (all optional): `firm` and `type` take comma-separated values
+(unknown ones are a `400` listing the valid values); `from` and `to` take an ISO
+date (`2026-12-24`, midnight UTC) or timestamp (`2026-12-24T15:00:00Z`; no
+offset means UTC). `from` defaults to *now*, so a bare `/api/v1/events` is
+"what is live or coming up"; pass an earlier `from` for recent history (the
+state keeps about 45 days). `next` honours `firm` and `type`.
+
+Each event:
+
+```json
+{
+  "id": "4560b9cb2193c0f3",
+  "firm": "topstep", "firm_name": "Topstep",
+  "type": "early_close", "summary": "⏳ Early Close — Thanksgiving",
+  "start": "2026-11-26T11:45:00-06:00", "end": "2026-11-26T23:59:00-06:00",
+  "start_utc": "2026-11-26T17:45:00+00:00", "end_utc": "2026-11-27T05:59:00+00:00",
+  "status": "upcoming",
+  "source_url": "https://help.topstep.com/en/articles/13350348-topstep-holiday-trading-hours"
+}
+```
+
+`status` is `upcoming`, `live` or `past` at `generated_at`; `start`/`end` are in
+the offset the calendar stores, `*_utc` are the same instants in UTC. `id` is
+the event's stable identity (the ICS `UID` prefix). Where the extraction quoted
+its source, `evidence` carries that quote.
+
+Responses carry `Access-Control-Allow-Origin: *` (callable from any web page;
+no cookies are read or set), `Cache-Control: public, max-age=300`, and an
+`ETag` — send it back as `If-None-Match` for a `304`. The API is versioned in
+the path; fields may be added to `v1`, never removed or renamed.
 
 ## Built-in statistics
 

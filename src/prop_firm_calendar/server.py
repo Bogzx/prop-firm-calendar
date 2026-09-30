@@ -4,7 +4,8 @@ One person runs `prop-firm-calendar serve` (or the Docker container); any trader
 subscribes to `http://host:port/feed.ics` from Google/Apple/Outlook calendar —
 no OAuth, no API keys on the subscriber side.
 
-Endpoints: GET /feed.ics (the calendar), GET /status (HTML), GET /healthz (JSON).
+Endpoints: GET /feed.ics (the calendar), GET /status (HTML), GET /healthz (JSON),
+and the read-only JSON API under /api/v1/ (see api.py).
 
 `/healthz` is the contract monitors are pointed at (docs/DEPLOYMENT.md), so it
 answers "is this feed trustworthy right now?", not merely "is the process up":
@@ -20,7 +21,7 @@ import json
 import logging
 import secrets
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from http.cookies import SimpleCookie
@@ -28,7 +29,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from prop_firm_calendar.state import load_state
+from prop_firm_calendar import api
+from prop_firm_calendar.state import State, load_state
 from prop_firm_calendar.stats import StatsStore
 
 logger = logging.getLogger(__name__)
@@ -42,6 +44,20 @@ STALE_INTERVALS = 2
 # from seven checkboxes, so real traffic never approaches this; the cap only
 # stops a crafted request loop from growing the cache without bound.
 _MAX_CACHED_FILTERS = 64
+
+# API responses may be reused this long by browsers and proxies. The data
+# changes at most once per sync interval (hours), and a window's status
+# (upcoming -> live) is at most this stale; clients that need to-the-second
+# answers compare start_utc/end_utc themselves.
+API_MAX_AGE_SECONDS = 300
+
+_CORS_HEADERS = [
+    # Public, read-only, no cookies read or set on /api/: any origin may call it.
+    ("Access-Control-Allow-Origin", "*"),
+    ("Access-Control-Allow-Methods", "GET, OPTIONS"),
+    ("Access-Control-Allow-Headers", "If-None-Match"),
+    ("Access-Control-Expose-Headers", "ETag"),
+]
 
 
 def _utcnow() -> datetime:
@@ -325,6 +341,8 @@ def make_handler(
     feed_renderer: Callable[[FeedSelection], bytes] | None = None,
     stats: StatsStore | None = None,
     valid_firms: Sequence[str] | None = None,
+    firm_titles: Mapping[str, str] | None = None,
+    firm_urls: Mapping[str, str] | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     from prop_firm_calendar.models import EventType
 
@@ -343,12 +361,34 @@ def make_handler(
     filtered_cache: dict[FeedSelection, tuple[tuple[float, int], bytes]] = {}
     cache_lock = threading.Lock()
 
+    catalog = api.Catalog(
+        firms=list(valid_firms or ()),
+        types=sorted(valid_types),
+        titles=dict(firm_titles or {}),
+        urls=dict(firm_urls or {}),
+        default_firm=default_firm,
+    )
+    # The API re-reads state on every request; parse it once per version.
+    parsed_state: dict[tuple[float, int], State] = {}
+
     def _state_version() -> tuple[float, int]:
         try:
             stat = state_path.stat()
         except OSError:
             return (0.0, 0)
         return (stat.st_mtime, stat.st_size)
+
+    def current_state() -> State:
+        version = _state_version()
+        with cache_lock:
+            cached = parsed_state.get(version)
+        if cached is not None:
+            return cached
+        loaded = load_state(state_path)
+        with cache_lock:
+            parsed_state.clear()
+            parsed_state[version] = loaded
+        return loaded
 
     def render_filtered(requested: FeedSelection) -> bytes:
         assert feed_renderer is not None
@@ -441,9 +481,58 @@ def make_handler(
                 return
             self._respond(200, "text/calendar; charset=utf-8", ics_path.read_bytes())
 
+        def _serve_api(self, path: str) -> None:
+            query = {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
+            now = status.clock()
+            try:
+                if path in ("/api/v1", "/api/v1/"):
+                    payload = api.index(catalog, now)
+                elif path == "/api/v1/events":
+                    payload = api.events(current_state(), catalog, query, now)
+                elif path == "/api/v1/next":
+                    payload = api.next_windows(current_state(), catalog, query, now)
+                else:
+                    raise LookupError(path)
+            except api.ApiError as e:
+                self._api_json(400, e.payload(), [("Cache-Control", "no-store")])
+                return
+            except LookupError:
+                self._api_json(404, {"error": "not found"}, [("Cache-Control", "no-store")])
+                return
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            etag = f'"{hashlib.sha256(body).hexdigest()[:32]}"'
+            caching = [
+                ("Cache-Control", f"public, max-age={API_MAX_AGE_SECONDS}"),
+                ("ETag", etag),
+            ]
+            if etag in [t.strip() for t in self.headers.get("If-None-Match", "").split(",")]:
+                self.send_response(304)
+                for name, value in _CORS_HEADERS + caching:
+                    self.send_header(name, value)
+                self.end_headers()
+                return
+            self._respond(200, "application/json; charset=utf-8", body, _CORS_HEADERS + caching)
+
+        def _api_json(self, code: int, payload: dict, headers: list[tuple[str, str]]) -> None:
+            body = json.dumps(payload).encode("utf-8")
+            self._respond(code, "application/json; charset=utf-8", body, _CORS_HEADERS + headers)
+
+        def do_OPTIONS(self) -> None:  # noqa: N802 - stdlib naming
+            """CORS preflight. Only the API is cross-origin; everything else 404s."""
+            if not self.path.split("?", 1)[0].startswith("/api/"):
+                self._json(404, {"error": "not found"})
+                return
+            self.send_response(204)
+            for name, value in [*_CORS_HEADERS, ("Access-Control-Max-Age", "86400")]:
+                self.send_header(name, value)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
         def do_GET(self) -> None:  # noqa: N802 - stdlib naming
             path = self.path.split("?", 1)[0]
-            if path == "/healthz":
+            if path == "/api" or path.startswith("/api/"):
+                self._serve_api(path)
+            elif path == "/healthz":
                 # 503 on unhealthy: a monitor pointed here (docs/DEPLOYMENT.md)
                 # can only page you if the status code moves.
                 payload = status.snapshot()
@@ -525,6 +614,8 @@ def serve_forever(
     stats: StatsStore | None = None,
     source_name: str = "FTMO",
     valid_firms: Sequence[str] | None = None,
+    firm_titles: Mapping[str, str] | None = None,
+    firm_urls: Mapping[str, str] | None = None,
 ) -> int:
     check_writable(state_path.parent)
     status = ServerStatus(
@@ -542,10 +633,20 @@ def serve_forever(
     loop_thread.start()
     httpd = ThreadingHTTPServer(
         (host, port),
-        make_handler(ics_path, state_path, status, feed_renderer, stats, valid_firms),
+        make_handler(
+            ics_path,
+            state_path,
+            status,
+            feed_renderer,
+            stats,
+            valid_firms,
+            firm_titles=firm_titles,
+            firm_urls=firm_urls,
+        ),
     )
     logger.info(
-        "Serving on http://%s:%d (feed: /feed.ics, status: /status); sync every %.0f min",
+        "Serving on http://%s:%d (feed: /feed.ics, status: /status, API: /api/v1/); "
+        "sync every %.0f min",
         host,
         port,
         interval_seconds / 60,

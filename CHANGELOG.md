@@ -29,6 +29,20 @@ here. **Upgrading needs no config, env or systemd change** (see "Renamed").
   version is still made by the old script; opt out with
   `AUTODEPLOY_REQUIRE_CI=0` — see docs/DEPLOYMENT.md
 
+### Added
+- **Read-only JSON API** in serve mode: `/api/v1/events?firm=&type=&from=&to=`,
+  `/api/v1/next` (the current or next window per firm) and `/api/v1/` (index).
+  CORS-open, `Cache-Control: public, max-age=300`, `ETag`/`304`. Same state
+  and de-duplication as the feed
+- **Secret scanning**: a gitleaks CI job over each push/PR's new commits, an
+  optional pre-commit config, and `SECURITY.md`
+
+### Changed
+- **One calendar entry per window across posts** (Google sync): a follow-up
+  post re-announcing a window shares the existing entry, which is deleted only
+  when the last post announcing it withdraws it. Duplicates created by earlier
+  versions are merged on the first run after upgrading
+
 ### Renamed
 - Package `ftmo_calendar` → **`prop_firm_calendar`**, distribution
   `ftmo-calendar` → **`prop-firm-calendar`**, command **`prop-firm-calendar`**
