@@ -99,9 +99,14 @@ flowchart LR
   token exits non-zero with clear instructions. So do the quiet failures, which
   are the dangerous ones: if the keyword gate stops matching any post (FTMO
   reworded, or the page moved), or a post that had events suddenly extracts
-  none, the run reports an *anomaly* — non-zero exit, a notification, a 503 on
-  `/healthz`, and a badge on the status page. It never silently does nothing
+  none, or validation rejects an event the announcement contains (a row with no
+  stated offset for a firm that requires one, a garbled time, an over-long
+  window), the run reports an *anomaly* — non-zero exit, a notification, a 503
+  on `/healthz`, and a badge on the status page. It never silently does nothing
   while you trust an empty calendar.
+- **Far-future events are held, not dropped.** Anything beyond
+  `max_days_ahead` is kept in the state and published once it comes within
+  range, with no further LLM call.
 - **Refuses to delete on doubt.** If an announcement's extraction loses events
   with nothing new to replace them — collapsing to zero, or shrinking from 8
   events to 1 — the missing future events are kept and flagged, not removed. A
@@ -237,9 +242,10 @@ tool quietly died.
 ## ICS feed details
 
 Set `[ics] enabled = true` (forced on automatically in feed-only and serve
-modes) and every run writes `ftmo-events.ics`: stable UIDs per event, UTC
-times, popup alarms matching `reminders_minutes`, a `REFRESH-INTERVAL` hint
-for subscribers, and a source link in each event's description.
+modes) and every run writes `ftmo-events.ics`: stable UIDs per event, local
+times in `[calendar] timezone` with a matching `VTIMEZONE`, popup alarms
+matching `reminders_minutes`, a `REFRESH-INTERVAL` hint for subscribers, and a
+link to the event's own announcement in its description.
 
 `ftmo-calendar serve` exposes it over HTTP alongside operations endpoints:
 
@@ -248,7 +254,9 @@ for subscribers, and a source link in each event's description.
   successful sync, subscribe how-to
 - `GET /healthz` — JSON with `ok`, `status`, `last_run`, `last_success`,
   `last_success_age_seconds`, `stale`, `next_run`, `last_error`, `anomalies`,
-  plus `sources` (per-firm health) and `unhealthy_sources`.
+  plus `sources` (per-firm health, including `events_upcoming`,
+  `events_deferred` and `rejected_extractions` — what each firm's calendar
+  holds and what validation kept out of it) and `unhealthy_sources`.
   **HTTP 503 when not `ok`**, so a plain uptime monitor detects a broken sync.
 
 **Per-firm health.** With several firms configured, each carries its own

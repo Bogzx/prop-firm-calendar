@@ -43,6 +43,12 @@ class FirmOutcome:
     events_created: int = 0
     events_deleted: int = 0
     events_kept: int = 0
+    #: Read off the state after the run, so they describe the firm's calendar
+    #: rather than this run's delta. A firm that is "ok" with 0 upcoming
+    #: events and a list of rejections is the case this makes visible.
+    events_upcoming: int = 0
+    events_deferred: int = 0
+    rejected: tuple[str, ...] = ()
 
     def as_dict(self) -> dict:
         return {
@@ -57,6 +63,9 @@ class FirmOutcome:
             "events_created": self.events_created,
             "events_deleted": self.events_deleted,
             "events_kept": self.events_kept,
+            "events_upcoming": self.events_upcoming,
+            "events_deferred": self.events_deferred,
+            "rejected": list(self.rejected),
         }
 
 
@@ -97,6 +106,8 @@ class MultiRunReport:
             total.events_deleted += r.events_deleted
             total.events_kept += r.events_kept
             total.rejections += r.rejections
+            total.events_deferred += r.events_deferred
+            total.rejected_lines.extend(r.rejected_lines)
             total.created_lines.extend(r.created_lines)
             total.deleted_lines.extend(r.deleted_lines)
         total.anomalies = self.anomalies
@@ -199,4 +210,26 @@ def _run_one(
         events_created=report.events_created,
         events_deleted=report.events_deleted,
         events_kept=report.events_kept,
+        **_calendar_counts(state, resolved.name, now),
     )
+
+
+def _calendar_counts(state: State, firm: str, now: datetime) -> dict:
+    """What this firm currently has in the calendar, from the state file."""
+    upcoming = deferred = 0
+    rejected: list[str] = []
+    for key, post in state.posts.items():
+        if post.firm != firm:
+            continue
+        upcoming += sum(1 for e in post.events if _ends_after(e.end, now))
+        deferred += len(post.deferred or [])
+        rejected += [f"{key}: {line}" for line in post.rejected]
+    return {"events_upcoming": upcoming, "events_deferred": deferred, "rejected": tuple(rejected)}
+
+
+def _ends_after(end: str, now: datetime) -> bool:
+    try:
+        end_dt = datetime.fromisoformat(end)
+    except ValueError:
+        return False
+    return (end_dt if end_dt.tzinfo else end_dt.replace(tzinfo=UTC)) > now

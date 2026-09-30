@@ -349,3 +349,33 @@ def test_a_feed_for_a_firm_with_nothing_scheduled_is_valid_and_empty() -> None:
     assert "BEGIN:VEVENT" not in ics
     assert "BEGIN:VCALENDAR" in ics and "END:VCALENDAR" in ics
     assert "X-WR-CALNAME:E8 Markets Trading Updates" in ics
+
+
+def test_a_firms_outcome_reports_its_calendar_and_rejections(tmp_path: Path) -> None:
+    cfg = write_config(tmp_path, "[[firms]]\nprofile = 'ftmo'\n")
+    good = RawEvent(
+        event_type="maintenance",
+        start_time="2026-06-13T08:00:00",
+        end_time="2026-06-13T10:00:00",
+        stated_utc_offset="+03:00",
+    )
+    far = good.model_copy(
+        update={"start_time": "2027-01-01T08:00:00", "end_time": "2027-01-01T10:00:00"}
+    )
+    bad = good.model_copy(update={"end_time": "2026-06-13T07:00:00"})
+    result = run_firms(
+        config=cfg,
+        sink=StateOnlySink(),
+        state=State(),
+        make_extractor=lambda resolved: StubExtractor([good, far, bad]),
+        now=NOW,
+        resolve=stub_resolver({"ftmo": StubSource([make_post("p1")])}),
+        stagger_fn=lambda seconds: 0.0,
+    )
+    [outcome] = result.outcomes
+    assert outcome.events_upcoming == 1
+    assert outcome.events_deferred == 1
+    assert outcome.rejected == ("p1: maintenance 2026-06-13T08:00:00: end is not after start",)
+    assert outcome.ok is False  # the run that dropped it raises the anomaly
+    assert outcome.as_dict()["rejected"] == list(outcome.rejected)
+    assert result.totals().events_deferred == 1

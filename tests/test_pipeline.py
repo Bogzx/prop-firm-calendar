@@ -659,3 +659,48 @@ def test_prune_keeps_a_post_that_still_holds_deferred_events() -> None:
     )
     state.prune(now=NOW)
     assert list(state.posts) == ["held"]
+
+
+# -- rejections reach /healthz --------------------------------------------
+
+
+def test_a_rejection_that_drops_a_real_event_is_an_anomaly(tmp_path: Path) -> None:
+    """Regression: rejections were a logger.warning and /healthz stayed green."""
+    backwards = RawEvent(
+        event_type="maintenance",
+        start_time="2026-06-06T14:00:00",
+        end_time="2026-06-06T08:00:00",
+        stated_utc_offset="+03:00",
+        affected="cTrader",
+    )
+    state = State()
+    report = _run(tmp_path, state, FakeExtractor([RAW, backwards]), NOW, display_name="FTMO")
+    assert report.rejections == 1
+    [anomaly] = report.anomalies
+    assert anomaly.startswith("FTMO: post trading-update-2026-06-04: 1 extracted event(s)")
+    assert "end is not after start" in anomaly and "cTrader" in anomaly
+    assert state.posts[POST.post_key].rejected == [
+        "maintenance 2026-06-06T14:00:00 (cTrader): end is not after start"
+    ]
+
+
+def test_a_missing_stated_offset_is_an_anomaly_not_a_silent_zero(tmp_path: Path) -> None:
+    """How E8 could read 'ok' with 0 events: every row rejected, nothing raised."""
+    no_offset = RAW.model_copy(update={"stated_utc_offset": None})
+    report = _run(tmp_path, State(), FakeExtractor([no_offset]), NOW, require_stated_offset=True)
+    assert report.events_created == 0
+    assert report.anomalies and "refusing to guess the hour" in report.anomalies[0]
+
+
+def test_benign_rejections_raise_nothing(tmp_path: Path) -> None:
+    ended = RawEvent(
+        event_type="maintenance",
+        start_time="2026-05-01T08:00:00",
+        end_time="2026-05-01T09:00:00",
+        stated_utc_offset="+03:00",
+    )
+    state = State()
+    report = _run(tmp_path, state, FakeExtractor([RAW, ended]), NOW)
+    assert report.rejections == 1
+    assert report.anomalies == []
+    assert state.posts[POST.post_key].rejected == []
