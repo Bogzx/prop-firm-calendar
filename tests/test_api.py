@@ -6,7 +6,7 @@ import json
 import threading
 import urllib.error
 import urllib.request
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
@@ -113,6 +113,9 @@ def test_filters_by_firm_type_and_time() -> None:
         ({"type": "lunch"}, "unknown type"),
         ({"from": "next tuesday"}, "from: expected an ISO 8601"),
         ({"from": "2026-09-10", "to": "2026-09-01"}, "'to' must be after 'from'"),
+        # Review: these overflowed on conversion to UTC and dropped the connection.
+        ({"from": "0001-01-01T00:00:00+05:00"}, "from: expected an ISO 8601"),
+        ({"to": "9999-12-31T23:59:59-05:00"}, "to: expected an ISO 8601"),
     ],
 )
 def test_bad_parameters_are_explained(params: dict, needle: str) -> None:
@@ -183,7 +186,7 @@ def test_events_over_http_with_cors_and_caching(base: str) -> None:
     assert headers["Content-Type"] == "application/json; charset=utf-8"
     assert headers["Access-Control-Allow-Origin"] == "*"
     assert headers["Cache-Control"] == "public, max-age=300"
-    assert headers["ETag"].startswith('"')
+    assert headers["ETag"].startswith('W/"')
     assert "Set-Cookie" not in headers
     payload = json.loads(body)
     assert [e["id"] for e in payload["events"]] == ["live", "later", "ts"]
@@ -243,3 +246,42 @@ def test_the_api_picks_up_a_new_sync(base: str, tmp_path: Path) -> None:
     save_state(state, tmp_path / "state.json")
     _, _, after = request(f"{base}/api/v1/events?firm=e8-markets")
     assert [e["id"] for e in json.loads(after)["events"]] == ["e8"]
+
+
+def test_the_etag_survives_the_clock_moving(tmp_path: Path) -> None:
+    """Review: the ETag hashed `generated_at`, so it changed every second.
+
+    The 304 test above passed only because its clock is frozen; with a real
+    clock If-None-Match never matched. The tag must follow the content.
+    """
+    state_path = tmp_path / "state.json"
+    save_state(make_state(), state_path)
+    clock = [NOW]
+    status = ServerStatus(started_at=NOW.isoformat(), clock=lambda: clock[0])
+    handler = make_handler(
+        ics_path=tmp_path / "feed.ics",
+        state_path=state_path,
+        status=status,
+        valid_firms=CATALOG.firms,
+        firm_titles=TITLES,
+        firm_urls=URLS,
+    )
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{httpd.server_address[1]}"
+    try:
+        for path in ("/api/v1/events", "/api/v1/next", "/api/v1/"):
+            clock[0] = NOW
+            _, headers, _ = request(base + path)
+            clock[0] = NOW + timedelta(seconds=30)
+            code, _, _ = request(base + path, headers={"If-None-Match": headers["ETag"]})
+            assert code == 304, path
+        # A window that ends changes the answer, and so the tag.
+        clock[0] = NOW
+        _, headers, _ = request(base + "/api/v1/events")
+        clock[0] = datetime(2026, 9, 30, tzinfo=UTC)
+        code, _, _ = request(base + "/api/v1/events", headers={"If-None-Match": headers["ETag"]})
+        assert code == 200
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
