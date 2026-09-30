@@ -46,5 +46,13 @@ echo "deploying ${REMOTE:0:7} (was ${LOCAL:0:7})"
 # reset, not pull: a deploy clone tracks origin/main exactly, even across
 # history rewrites or force pushes
 git reset --hard -q origin/main
-docker compose up -d --build
+if ! docker compose up -d --build; then
+    # HEAD already equals origin/main, so without this a failed build (PyPI
+    # down, disk full) would never be retried. Put the checkout back so the
+    # next tick tries again, and make sure the old version is what runs.
+    git reset --hard -q "$LOCAL"
+    docker compose up -d --build || true
+    echo "deploy of ${REMOTE:0:7} failed; back on ${LOCAL:0:7}, will retry next tick" >&2
+    exit 1
+fi
 echo "deployed ${REMOTE:0:7}"

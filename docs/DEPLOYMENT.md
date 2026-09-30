@@ -220,6 +220,7 @@ The journal then reads one of:
 | `CI passed for abc1234 …` then `deployed abc1234` | deployed | success |
 | `not deploying abc1234: 'CI' concluded failure …` | red commit; the old version keeps running | **failed** |
 | `not deploying abc1234: CI status unknown …` | GitHub unreachable or rate-limited | **failed** |
+| `deploy of abc1234 failed; back on def5678, will retry next tick` | `docker compose up --build` failed; the checkout was reset and the old version brought back up | **failed** |
 
 Upgrading needs no change to the unit above: the first deploy of this version
 is still made by the previous, ungated script, and every later one is gated.
