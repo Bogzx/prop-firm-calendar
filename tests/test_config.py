@@ -137,3 +137,20 @@ def test_no_default_summary_names_a_single_firm() -> None:
     from prop_firm_calendar.config import DEFAULT_SUMMARIES
 
     assert not any("FTMO" in summary for summary in DEFAULT_SUMMARIES.values())
+
+
+def test_request_timeout_read_from_toml(tmp_path: Path) -> None:
+    (tmp_path / "config.toml").write_text(
+        '[llm]\nprovider = "openai-compatible"\nrequest_timeout_sec = 30\n'
+        "[calendar]\nenabled = false\n",
+        encoding="utf-8",
+    )
+    assert load_config(tmp_path / "config.toml", env={}).llm.request_timeout_sec == 30
+
+
+def test_non_positive_request_timeout_rejected(tmp_path: Path) -> None:
+    (tmp_path / "config.toml").write_text(
+        "[llm]\nrequest_timeout_sec = 0\n[calendar]\nenabled = false\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError, match="request_timeout_sec"):
+        load_config(tmp_path / "config.toml", env={})

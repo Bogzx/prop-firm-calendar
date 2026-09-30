@@ -92,6 +92,9 @@ class LLMConfig:
     base_url: str = ""  # e.g. https://openrouter.ai/api/v1
     models: tuple[str, ...] = ("gemini-2.5-flash", "gemini-2.0-flash")
     consensus_runs: int = 3  # majority-vote across N extractions for stable results
+    # Per-request limit for openai-compatible providers. Without it the SDK waits
+    # up to 10 minutes per attempt, so one hung request stalls a whole sync.
+    request_timeout_sec: float = 120.0
     api_key: str = ""  # from LLM_API_KEY / GEMINI_API_KEY env, never from TOML
 
 
@@ -279,6 +282,8 @@ def _validate(cfg: AppConfig) -> None:
         raise ConfigError("llm.models must list at least one model")
     if cfg.llm.consensus_runs < 1:
         raise ConfigError("llm.consensus_runs must be at least 1")
+    if cfg.llm.request_timeout_sec <= 0:
+        raise ConfigError("llm.request_timeout_sec must be positive")
     zones = [cfg.source.timezone, cfg.calendar.timezone]
     zones += [f.timezone for f in cfg.firms if f.timezone]
     for tz_name in zones:

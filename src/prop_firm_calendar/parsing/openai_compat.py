@@ -8,8 +8,12 @@ from prop_firm_calendar.parsing.llm import BackendError
 
 
 class OpenAICompatBackend:
-    def __init__(self, api_key: str, base_url: str = "") -> None:
-        self._client = OpenAI(api_key=api_key, base_url=base_url or None)
+    def __init__(self, api_key: str, base_url: str = "", timeout: float = 120.0) -> None:
+        # One SDK retry on connection errors/429/5xx; model fallback and the
+        # next sync cover anything beyond that.
+        self._client = OpenAI(
+            api_key=api_key, base_url=base_url or None, timeout=timeout, max_retries=1
+        )
 
     def complete(self, prompt: str, model: str) -> str:
         try:

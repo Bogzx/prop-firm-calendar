@@ -20,3 +20,19 @@ def test_openai_compatible_backend_selected() -> None:
     )
     backend = make_backend(cfg)
     assert type(backend).__name__ == "OpenAICompatBackend"
+
+
+def test_openai_compatible_backend_gets_a_request_timeout() -> None:
+    # Without an explicit timeout the SDK waits up to 10 min per attempt, and one
+    # hung request stalls the whole sync (seen live on 2026-09-30).
+    backend = make_backend(
+        LLMConfig(provider="openai-compatible", api_key="k", request_timeout_sec=45)
+    )
+    client = backend._client  # type: ignore[attr-defined]
+    assert client.timeout == 45
+    assert client.max_retries == 1
+
+
+def test_default_request_timeout_is_bounded() -> None:
+    backend = make_backend(LLMConfig(provider="openai-compatible", api_key="k"))
+    assert backend._client.timeout == 120  # type: ignore[attr-defined]
