@@ -174,3 +174,66 @@ def test_typeless_legacy_events_appear_only_unfiltered() -> None:
 def test_filtered_calendar_is_named_after_filter() -> None:
     ics = render_ics(make_state(), (), types=frozenset({"maintenance"}), now=NOW)
     assert "X-WR-CALNAME:FTMO Trading Updates (maintenance)" in ics
+
+
+def _post(firm: str, key: str, url: str = "") -> PostState:
+    return PostState(
+        content_hash="h",
+        last_seen="2026-06-09T00:00:00+00:00",
+        firm=firm,
+        url=url,
+        events=[
+            TrackedEvent(
+                event_key=key,
+                google_event_id=f"g-{key}",
+                end="2026-06-10T14:00:00+03:00",
+                summary=f"{firm} event",
+                start="2026-06-10T08:00:00+03:00",
+                event_type="maintenance",
+            )
+        ],
+    )
+
+
+def _descriptions(ics: str) -> dict[str, str]:
+    """UID key -> DESCRIPTION line of that VEVENT."""
+    found: dict[str, str] = {}
+    for block in ics.split("BEGIN:VEVENT")[1:]:
+        lines = block.split("\r\n")
+        uid = next(line for line in lines if line.startswith("UID:"))[4:].split("@")[0]
+        found[uid] = next((line for line in lines if line.startswith("DESCRIPTION:Source")), "")
+    return found
+
+
+def test_each_event_links_to_its_own_firms_announcement() -> None:
+    """The combined feed linked every event to FTMO's page, Topstep's included."""
+    state = State(
+        posts={
+            "a": _post("ftmo", "k-ftmo", "https://ftmo.com/en/blog/trading-updates/x/"),
+            "b": _post("topstep", "k-top", "https://help.topstep.com/en/articles/1-holiday"),
+        }
+    )
+    ics = render_ics(state, (), source_url="https://ftmo.com/en/trading-updates/", now=NOW)
+    links = _descriptions(ics)
+    assert "https://ftmo.com/en/blog/trading-updates/x/" in links["k-ftmo"]
+    assert "https://help.topstep.com/en/articles/1-holiday" in links["k-top"]
+    assert "ftmo.com" not in links["k-top"]
+
+
+def test_a_pre_v5_post_without_a_url_falls_back_to_its_firms_page() -> None:
+    state = State(posts={"a": _post("e8-markets", "k-e8"), "b": _post("", "k-legacy")})
+    ics = render_ics(
+        state,
+        (),
+        source_url="https://ftmo.com/en/trading-updates/",
+        default_firm="ftmo",
+        firm_urls={
+            "e8-markets": "https://help.e8markets.com/en/articles/12122593",
+            "ftmo": "https://ftmo.com/en/trading-updates/",
+        },
+        now=NOW,
+    )
+    links = _descriptions(ics)
+    assert "help.e8markets.com" in links["k-e8"]
+    # Unattributed state belongs to the first configured firm (State.firm_of).
+    assert "https://ftmo.com/en/trading-updates/" in links["k-legacy"]

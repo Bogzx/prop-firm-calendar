@@ -491,3 +491,38 @@ def test_calendar_recovery_via_key_lookup(tmp_path: Path) -> None:
     assert sink2.created == []
     assert report.events_kept == 1
     assert fresh_state.posts[POST.post_key].events[0].google_event_id == "preexisting-gid"
+
+
+def test_the_post_url_is_recorded_even_when_the_post_is_unchanged(tmp_path: Path) -> None:
+    """State written before v5 has no URL; the next sighting must fill it in."""
+    state = State(
+        posts={
+            POST.post_key: PostState(
+                content_hash=POST.content_hash, last_seen=NOW.isoformat(), events=[]
+            )
+        }
+    )
+    extractor = FakeExtractor([RAW])
+    run_pipeline(
+        source=FakeSource([POST]),
+        extractor=extractor,
+        sink=FakeSink(),
+        state=state,
+        config=make_config(tmp_path),
+        now=NOW,
+    )
+    assert extractor.calls == 0
+    assert state.posts[POST.post_key].url == POST.url
+
+
+def test_a_new_post_records_its_url(tmp_path: Path) -> None:
+    state = State()
+    run_pipeline(
+        source=FakeSource([POST]),
+        extractor=FakeExtractor([RAW]),
+        sink=FakeSink(),
+        state=state,
+        config=make_config(tmp_path),
+        now=NOW,
+    )
+    assert state.posts[POST.post_key].url == POST.url

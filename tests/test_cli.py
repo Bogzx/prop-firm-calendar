@@ -184,3 +184,33 @@ def test_run_exits_zero_on_a_clean_run(tmp_path: Path, monkeypatch: pytest.Monke
         lambda config, dry_run: _sync_result(RunReport(posts_seen=4, posts_relevant=4)),
     )
     assert cli.main(["--config", str(tmp_path / "config.toml")]) == cli.EXIT_OK
+
+
+def test_the_written_feed_links_each_firm_to_its_own_page(tmp_path: Path) -> None:
+    """Regression: _write_feed passed config.source.url, FTMO's page, for every event."""
+    from ftmo_calendar.config import load_config
+    from ftmo_calendar.state import PostState, TrackedEvent
+
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[[firms]]\nprofile = "ftmo"\n[[firms]]\nprofile = "topstep"\n'
+        '[ics]\nenabled = true\npath = "feed.ics"\n',
+        encoding="utf-8",
+    )
+    config = load_config(path, env={})
+    event = TrackedEvent(
+        event_key="k1",
+        google_event_id="ics:k1",
+        end="2026-11-26T23:59:00-06:00",
+        summary="⏳ Early Close",
+        start="2026-11-26T11:45:00-06:00",
+        event_type="early_close",
+    )
+    # A pre-v5 entry: attributed to Topstep but carrying no URL of its own.
+    state = State(
+        posts={"topstep-holiday": PostState("h", NOW.isoformat(), [event], firm="topstep")}
+    )
+    cli._write_feed(config, state)
+    ics = (tmp_path / "feed.ics").read_text(encoding="utf-8")
+    assert "Source: https://help.topstep.com/" in ics
+    assert "ftmo.com" not in ics

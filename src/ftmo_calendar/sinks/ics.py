@@ -145,6 +145,7 @@ def render_ics(
     firms: frozenset[str] | None = None,
     default_firm: str = "",
     firm_titles: Mapping[str, str] | None = None,
+    firm_urls: Mapping[str, str] | None = None,
     tz_name: str = "UTC",
     now: datetime | None = None,
 ) -> str:
@@ -157,17 +158,23 @@ def render_ics(
     `default_firm` attributes state entries written before per-firm tracking —
     see State.firm_of. Without it, upgrading would drop every existing event
     out of every per-firm feed until it happened to be re-scraped.
+
+    Each event links to its own announcement: the post's URL when the state
+    recorded one, else its firm's page from `firm_urls`, else `source_url`.
+    A single `source_url` for the whole feed sent Topstep and E8 subscribers
+    to FTMO's page.
     """
     now = now or datetime.now(UTC)
     tz = ZoneInfo(tz_name)
     dtstamp = now.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
 
-    selected: list[tuple[TrackedEvent, datetime, datetime]] = []
+    selected: list[tuple[TrackedEvent, datetime, datetime, str]] = []
     present: list[str] = []
     for post in state.posts.values():
         firm = state.firm_of(post, default_firm)
         if firms is not None and firm not in firms:
             continue
+        link = post.url or (firm_urls or {}).get(firm, "") or source_url
         for event in post.events:
             if not event.summary or not event.start:
                 continue  # pre-v2 state entry without display data
@@ -176,13 +183,18 @@ def render_ics(
             if firm and firm not in present:
                 present.append(firm)
             selected.append(
-                (event, datetime.fromisoformat(event.start), datetime.fromisoformat(event.end))
+                (
+                    event,
+                    datetime.fromisoformat(event.start),
+                    datetime.fromisoformat(event.end),
+                    link,
+                )
             )
 
     vtimezone: list[str] = []
     if selected:
         vtimezone = _vtimezone_lines(
-            tz, min(s for _, s, _ in selected), max(e for _, _, e in selected)
+            tz, min(s for _, s, _, _ in selected), max(e for _, _, e, _ in selected)
         )
 
     # Name after what was ASKED for when a firm filter is present, not after
@@ -216,7 +228,7 @@ def render_ics(
             return f"{prop};TZID={tz.key}:{dt.astimezone(tz).strftime('%Y%m%dT%H%M%S')}"
         return f"{prop}:{dt.astimezone(UTC).strftime('%Y%m%dT%H%M%SZ')}"
 
-    for event, start_dt, end_dt in selected:
+    for event, start_dt, end_dt, link in selected:
         lines += [
             "BEGIN:VEVENT",
             f"UID:{event.event_key}@ftmo-calendar",
@@ -225,8 +237,8 @@ def render_ics(
             stamp("DTEND", end_dt),
             f"SUMMARY:{_escape(event.summary)}",
         ]
-        if source_url:
-            lines.append(f"DESCRIPTION:Source: {_escape(source_url)}\\nCreated by AutoFtmoCalendar")
+        if link:
+            lines.append(f"DESCRIPTION:Source: {_escape(link)}\\nCreated by AutoFtmoCalendar")
         for minutes in reminders_minutes:
             lines += [
                 "BEGIN:VALARM",
@@ -249,6 +261,7 @@ def write_ics(
     refresh_minutes: int = 0,
     default_firm: str = "",
     firm_titles: Mapping[str, str] | None = None,
+    firm_urls: Mapping[str, str] | None = None,
     tz_name: str = "UTC",
     now: datetime | None = None,
 ) -> None:
@@ -259,6 +272,7 @@ def write_ics(
         refresh_minutes=refresh_minutes,
         default_firm=default_firm,
         firm_titles=firm_titles,
+        firm_urls=firm_urls,
         tz_name=tz_name,
         now=now,
     )
