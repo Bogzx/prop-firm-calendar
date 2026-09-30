@@ -16,6 +16,7 @@ from prop_firm_calendar.models import SourcePost, TradingEvent
 from prop_firm_calendar.parsing.llm import RawEvent
 from prop_firm_calendar.parsing.validate import Rejection, validate_events
 from prop_firm_calendar.sinks.base import EventSink
+from prop_firm_calendar.sinks.null import StateOnlySink, is_placeholder
 from prop_firm_calendar.state import PostState, State, TrackedEvent
 
 logger = logging.getLogger(__name__)
@@ -382,11 +383,15 @@ def _merge_duplicate_windows(
             if tracked.start and _future(tracked, now):
                 groups.setdefault(_tracked_window(firm, tracked), []).append(tracked)
     for members in groups.values():
-        survivor = members[0].google_event_id
-        extras = {m.google_event_id for m in members} - {survivor}
-        for extra in sorted(extras):
+        ids = [m.google_event_id for m in members]
+        # A feed-only placeholder has no calendar entry behind it: after a
+        # switch to Google mode it must never outlive (and delete) a real one.
+        real = [i for i in ids if not is_placeholder(i)]
+        survivor = real[0] if real else ids[0]
+        for extra in sorted(set(ids) - {survivor}):
             try:
-                sink.delete_event(extra)
+                if not is_placeholder(extra):
+                    sink.delete_event(extra)
             except Exception as e:  # noqa: BLE001 - retried next run; never fail the sync
                 logger.warning("Could not remove duplicate calendar entry %s: %s", extra, e)
                 continue
@@ -580,6 +585,12 @@ def _publish(
     the entry is deleted only once no post references it (see _reconcile).
     """
     shared = _shared_window(state, firm, post_key, event)
+    if (
+        shared is not None
+        and is_placeholder(shared.google_event_id)
+        and not isinstance(sink, StateOnlySink)
+    ):
+        shared = None  # nothing to share in a real calendar; create the entry
     if shared is not None:
         logger.info(
             "Event %s is the same window as %s; sharing its calendar entry",

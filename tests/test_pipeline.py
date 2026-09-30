@@ -914,6 +914,48 @@ def test_a_dry_run_merges_nothing(tmp_path: Path) -> None:
     assert sink.deleted == []
 
 
+def _repoint(state: State, post_key: str, backend_id: str) -> None:
+    for tracked in state.posts[post_key].events:
+        tracked.google_event_id = backend_id
+
+
+def test_a_feed_only_placeholder_never_outlives_a_real_google_entry(tmp_path: Path) -> None:
+    """Review: after switching feed-only -> Google, the merge deleted the real entry.
+
+    The older post's `ics:` id "survived", the real Google event was deleted
+    and the window vanished from the user's calendar.
+    """
+    state = _legacy_duplicate_state()
+    _repoint(state, POST.post_key, "ics:whatever")
+    sink = FakeSink()
+    report = _sync(tmp_path, state, sink, {POST: [RAW], FOLLOW_UP: [RAW]})
+    assert sink.deleted == []
+    assert report.duplicates_merged == 1
+    assert {e.google_event_id for p in state.posts.values() for e in p.events} == {"g-dup"}
+
+
+def test_google_mode_does_not_share_a_placeholder(tmp_path: Path) -> None:
+    """A new post matching a feed-only entry gets a real calendar entry."""
+    state, sink = State(), FakeSink()
+    _sync(tmp_path, state, sink, {POST: [RAW]})
+    _repoint(state, POST.post_key, "ics:whatever")
+    sink = FakeSink()
+    _sync(tmp_path, state, sink, {POST: [RAW], FOLLOW_UP: [RAW]})
+    assert len(sink.created) == 1
+    # ...and the merge then points the old post at it too.
+    assert {e.google_event_id for p in state.posts.values() for e in p.events} == {"gid1"}
+
+
+def test_feed_only_mode_still_shares_placeholders(tmp_path: Path) -> None:
+    from prop_firm_calendar.sinks.null import StateOnlySink
+
+    state = State()
+    extractor = PerPostExtractor({POST.text: [RAW], FOLLOW_UP.text: [RAW]})
+    _run(tmp_path, state, extractor, NOW, posts=[POST, FOLLOW_UP], sink=StateOnlySink())
+    ids = {e.google_event_id for p in state.posts.values() for e in p.events}
+    assert len(ids) == 1 and next(iter(ids)).startswith("ics:")
+
+
 def test_the_tracked_event_keeps_its_evidence_through_a_save(tmp_path: Path) -> None:
     quoted = RAW.model_copy(update={"evidence": "ctrader maintenance on Saturday 6 Jun 2026"})
     state = State()
