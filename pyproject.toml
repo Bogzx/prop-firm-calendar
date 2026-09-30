@@ -66,3 +66,6 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "live_llm: calls a real LLM API and costs money; skipped unless PFC_LIVE_EVAL=1 and LLM_API_KEY are set",
+]

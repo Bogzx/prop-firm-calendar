@@ -34,6 +34,14 @@ here. **Upgrading needs no config, env or systemd change** (see "Renamed").
   `/api/v1/next` (the current or next window per firm) and `/api/v1/` (index).
   CORS-open, `Cache-Control: public, max-age=300`, `ETag`/`304`. Same state
   and de-duplication as the feed
+- **Evidence spans**: each event carries the announcement's own words for it,
+  verified word-for-word against the scraped text (ICS/Google description, API).
+  An unfound quote publishes the event as *(unconfirmed)*;
+  `[events] require_evidence = true` rejects it
+- **`prop-firm-calendar eval`**: the production prompt over every golden fixture
+  N times against a real model, diffed against the expected events; also a
+  `live_llm` pytest marker and a manual/weekly workflow that needs the
+  `LLM_API_KEY` secret
 - **Secret scanning**: a gitleaks CI job over each push/PR's new commits, an
   optional pre-commit config, and `SECURITY.md`
 

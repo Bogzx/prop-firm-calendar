@@ -1,0 +1,100 @@
+name: LLM eval
+
+# Runs the production extraction prompt against every golden fixture with a
+# real model and fails on any missing/extra event or wrong stated offset.
+# It makes real, billed API calls (fixtures x runs x consensus_runs), so it
+# never runs on push or PR — only by hand or weekly, and only with a secret.
+#
+# Setup (repository settings):
+#   secrets.LLM_API_KEY      required; without it the job skips with a notice
+#   vars.LLM_PROVIDER        "gemini" (default) or "openai-compatible"
+#   vars.LLM_BASE_URL        e.g. https://openrouter.ai/api/v1
+#   vars.LLM_MODELS          comma-separated, first is primary
+#   vars.LLM_CONSENSUS_RUNS  default 3, as in production
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Extractions per fixture"
+        default: "3"
+      firm:
+        description: "Only this profile (blank = all)"
+        default: ""
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: llm-eval
+  cancel-in-progress: false
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+    steps:
+      - name: Require the secret
+        id: gate
+        run: |
+          if [ -z "$LLM_API_KEY" ]; then
+            echo "::notice::LLM_API_KEY is not set; skipping the live eval."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.skip != 'true'
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.skip != 'true'
+        with:
+          python-version: "3.12"
+      - name: Install
+        if: steps.gate.outputs.skip != 'true'
+        run: pip install -c requirements.lock -e .
+      - name: Write the eval config
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          PROVIDER: ${{ vars.LLM_PROVIDER }}
+          BASE_URL: ${{ vars.LLM_BASE_URL }}
+          MODELS: ${{ vars.LLM_MODELS }}
+          CONSENSUS: ${{ vars.LLM_CONSENSUS_RUNS }}
+        run: |
+          python - <<'PY'
+          import json, os
+          lines = ["[calendar]", "enabled = false", "[llm]"]
+          if os.environ["PROVIDER"]:
+              lines.append(f"provider = {json.dumps(os.environ['PROVIDER'])}")
+          if os.environ["BASE_URL"]:
+              lines.append(f"base_url = {json.dumps(os.environ['BASE_URL'])}")
+          models = [m.strip() for m in os.environ["MODELS"].split(",") if m.strip()]
+          if models:
+              lines.append(f"models = {json.dumps(models)}")
+          if os.environ["CONSENSUS"]:
+              lines.append(f"consensus_runs = {int(os.environ['CONSENSUS'])}")
+          open("eval.toml", "w").write("\n".join(lines) + "\n")
+          PY
+          cat eval.toml
+      - name: Evaluate
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          RUNS: ${{ github.event.inputs.runs || '3' }}
+          FIRM: ${{ github.event.inputs.firm }}
+        run: |
+          set -o pipefail
+          args=(--runs "$RUNS" --json eval.json --markdown eval.md)
+          [ -n "$FIRM" ] && args+=(--firm "$FIRM")
+          status=0
+          prop-firm-calendar --config eval.toml eval --fixtures tests/fixtures "${args[@]}" || status=$?
+          cat eval.md >> "$GITHUB_STEP_SUMMARY" || true
+          exit $status
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.gate.outputs.skip != 'true'
+        with:
+          name: llm-eval-${{ github.run_id }}
+          path: |
+            eval.json
+            eval.md
+          if-no-files-found: ignore

@@ -1,4 +1,4 @@
-"""Command-line interface: prop-firm-calendar run|auth|status|serve."""
+"""Command-line interface: prop-firm-calendar run|auth|status|serve|eval."""
 
 from __future__ import annotations
 
@@ -70,6 +70,31 @@ def build_parser() -> argparse.ArgumentParser:
         "serve", help="run periodic syncs and host the ICS feed + status page over HTTP"
     )
     serve_parser.add_argument("--port", type=int, default=None, help="override [serve] port")
+
+    eval_parser = subparsers.add_parser(
+        "eval",
+        help="score the configured LLM against the golden fixtures (makes real API calls)",
+    )
+    eval_parser.add_argument(
+        "--fixtures",
+        type=Path,
+        default=Path("tests/fixtures"),
+        help="directory of <profile>/<name>.expected.json fixtures (default: tests/fixtures)",
+    )
+    eval_parser.add_argument("--runs", type=int, default=3, help="extractions per fixture")
+    eval_parser.add_argument(
+        "--firm", action="append", default=None, help="only this profile (repeatable)"
+    )
+    eval_parser.add_argument("--json", type=Path, default=None, help="write the report as JSON")
+    eval_parser.add_argument(
+        "--markdown", type=Path, default=None, help="write the report as Markdown"
+    )
+    eval_parser.add_argument(
+        "--max-missing", type=int, default=0, help="missing events tolerated per run"
+    )
+    eval_parser.add_argument(
+        "--max-extra", type=int, default=0, help="extra events tolerated per run"
+    )
     return parser
 
 
@@ -348,6 +373,49 @@ def _cmd_serve(config: AppConfig, port_override: int | None) -> int:
     )
 
 
+def _cmd_eval(config: AppConfig, args: argparse.Namespace) -> int:
+    """Run the extraction eval; exit 1 when the gate fails, 2 when it cannot run."""
+    from prop_firm_calendar.evaluation import EvalError, discover, evaluate
+    from prop_firm_calendar.parsing.factory import make_backend
+    from prop_firm_calendar.parsing.llm import EventExtractor
+
+    try:
+        cases = discover(args.fixtures, args.firm)
+    except (EvalError, ConfigError) as e:
+        logger.error("%s", e)
+        return EXIT_CONFIG
+    backend = make_backend(config.llm)
+    calls = len(cases) * max(1, args.runs) * config.llm.consensus_runs
+    logger.info(
+        "Evaluating %d fixture(s) x %d run(s) x %d consensus = at least %d LLM call(s)",
+        len(cases),
+        max(1, args.runs),
+        config.llm.consensus_runs,
+        calls,
+    )
+    report = evaluate(
+        cases,
+        lambda profile: EventExtractor(
+            backend,
+            config.llm.models,
+            consensus_runs=config.llm.consensus_runs,
+            prompt_hints=profile.prompt_hints,
+        ),
+        runs=args.runs,
+        max_missing=args.max_missing,
+        max_extra=args.max_extra,
+    )
+    markdown = report.to_markdown()
+    print(markdown)
+    if args.markdown:
+        args.markdown.write_text(markdown, encoding="utf-8")
+    if args.json:
+        import json
+
+        args.json.write_text(json.dumps(report.as_dict(), indent=2), encoding="utf-8")
+    return EXIT_OK if report.passed else EXIT_ERROR
+
+
 def _cmd_status(config: AppConfig) -> int:
     from prop_firm_calendar.state import load_state
 
@@ -395,6 +463,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_auth(config, check=args.check)
         if command == "serve":
             return _cmd_serve(config, port_override=args.port)
+        if command == "eval":
+            return _cmd_eval(config, args)
         return _cmd_status(config)
     except (AuthError, ConfigError) as e:
         logger.error("%s", e)

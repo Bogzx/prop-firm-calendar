@@ -524,11 +524,28 @@ schtasks /Create /TN "Prop Firm Calendar" /SC HOURLY /MO 6 `
 ## Development
 
 ```bash
-pip install -e .[dev]
-pytest          # run tests
+pip install -c requirements.lock -e .[dev]
+pytest          # run tests (offline; LLM backends are scripted)
 ruff check .    # lint
 mypy src        # type-check
 ```
+
+**Is the model still right?** The golden tests pin hand-verified events and
+never call a model. `prop-firm-calendar eval` does: it runs the production
+prompt, hints and consensus over every `tests/fixtures/<firm>/*.expected.json`
+several times and fails on any missing or extra event or wrong stated offset
+(it also reports run-to-run instability, lost `affected` text and unverified
+evidence quotes). It makes real, billed API calls:
+
+```bash
+prop-firm-calendar --config config.toml eval --fixtures tests/fixtures --runs 3 --markdown eval.md
+PFC_LIVE_EVAL=1 LLM_API_KEY=... pytest -m live_llm    # the same, as a pytest job
+```
+
+In CI it is the manual/weekly **LLM eval** workflow
+(`.github/workflows/llm-eval.yml`), which needs the `LLM_API_KEY` secret and
+optionally `LLM_PROVIDER` / `LLM_BASE_URL` / `LLM_MODELS` repository variables;
+without the secret it skips.
 
 The architecture and roadmap live in [`docs/superpowers/specs/`](docs/superpowers/specs/).
 
