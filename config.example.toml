@@ -138,5 +138,5 @@ holiday_closure = "🏖️ Closed All Day"
 early_close = "⏳ Early Close"
 late_open = "🕗 Late Open"
 symbol_event = "📌 Forced Action"
-other = "ℹ️ FTMO Trading Update"
+other = "ℹ️ Trading Update"
 holiday_hours = "🕒 Modified Trading Hours"   # legacy: pre-0.8 state files only
