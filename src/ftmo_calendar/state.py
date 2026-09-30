@@ -41,6 +41,12 @@ class PostState:
     #: Empty on older entries until the post is next seen; readers fall back to
     #: the firm's index page.
     url: str = ""
+    #: Raw extractions that validated except for being beyond max_days_ahead
+    #: (v5), stored as RawEvent dicts. Re-validated every run without an LLM
+    #: call and published once they come within range. `None` marks an entry
+    #: loaded from a pre-v5 file, which cannot say whether anything was
+    #: dropped; the pipeline re-extracts such a post once.
+    deferred: list[dict] | None = field(default_factory=list)
 
 
 @dataclass
@@ -73,8 +79,8 @@ class State:
             last_seen_dt = datetime.fromisoformat(post.last_seen)
             if last_seen_dt.tzinfo is None:
                 last_seen_dt = last_seen_dt.replace(tzinfo=UTC)
-            if last_seen_dt >= cutoff:
-                continue
+            if last_seen_dt >= cutoff or post.deferred:
+                continue  # deferred events have not happened yet
             all_ended = True
             for e in post.events:
                 end_dt = datetime.fromisoformat(e.end)
@@ -98,6 +104,7 @@ def load_state(path: Path) -> State:
                 last_seen=p["last_seen"],
                 firm=p.get("firm", ""),
                 url=p.get("url", ""),
+                deferred=p["deferred"] if isinstance(p.get("deferred"), list) else None,
                 events=[
                     TrackedEvent(
                         event_key=e["event_key"],
