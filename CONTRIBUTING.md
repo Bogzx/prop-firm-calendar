@@ -7,7 +7,8 @@ Thanks for considering a contribution!
 ```bash
 git clone https://github.com/Bogzx/prop-firm-calendar && cd prop-firm-calendar
 python -m venv .venv && . .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e .[dev]
+pip install -c requirements.lock -e .[dev]   # the versions CI and Docker use
+pipx install pre-commit && pre-commit install   # optional: gitleaks + ruff on commit
 ```
 
 ## Before opening a PR
@@ -20,6 +21,8 @@ mypy src
 pytest
 ```
 
+- Never commit a secret. CI's `secrets` job scans every new commit with
+  gitleaks and fails on a finding; see [SECURITY.md](SECURITY.md).
 - New behavior needs a test. The suite runs offline: scraping is tested against
   recorded HTML fixtures (`tests/fixtures/<profile>/`), LLM parsing against
   scripted backends, and the HTTP server against a real server on an ephemeral
