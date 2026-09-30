@@ -649,6 +649,50 @@ def test_a_pre_v5_post_is_re_extracted_exactly_once(tmp_path: Path) -> None:
     assert extractor.calls == 1
 
 
+def _as_v4(tmp_path: Path, state: State) -> State:
+    path = tmp_path / "v4.json"
+    save_state(state, path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    for post in payload["posts"].values():
+        del post["deferred"]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return load_state(path)
+
+
+def test_the_upgrade_re_extraction_never_replaces_a_tracked_event(tmp_path: Path) -> None:
+    """Review: the text is unchanged, so a drifted reading is not a reschedule.
+
+    Reconciling it deleted the calendar entry and gave subscribers a new UID
+    for every tracked window the live model happened to read differently.
+    """
+    first = FakeSink()
+    state = State()
+    _run(tmp_path, state, FakeExtractor([RAW, RAW_B]), NOW, sink=first)
+    before = [(e.event_key, e.google_event_id) for e in state.posts[POST.post_key].events]
+    upgraded = _as_v4(tmp_path, state)
+
+    drifted = RAW.model_copy(update={"end_time": "2026-06-06T14:30:00"})
+    sink = FakeSink()
+    report = _run(tmp_path, upgraded, FakeExtractor([drifted, FAR]), NOW, sink=sink)
+    assert sink.deleted == [] and sink.created == []
+    assert report.events_deleted == 0 and report.anomalies == []
+    post = upgraded.posts[POST.post_key]
+    # RAW_B missing from this reading is not a withdrawal either.
+    assert [(e.event_key, e.google_event_id) for e in post.events] == before
+    assert post.deferred == [FAR.model_dump()]
+
+
+def test_the_upgrade_re_extraction_adds_what_the_old_cap_dropped(tmp_path: Path) -> None:
+    state = State()
+    _run(tmp_path, state, FakeExtractor([RAW]), NOW)
+    upgraded = _as_v4(tmp_path, state)
+    sink = FakeSink()
+    # By LATER the dropped far event is within range: it is published directly.
+    _run(tmp_path, upgraded, FakeExtractor([RAW, FAR]), LATER, sink=sink)
+    assert [e.start.date().isoformat() for e in sink.created] == ["2026-12-25"]
+    assert len(upgraded.posts[POST.post_key].events) == 2
+
+
 def test_prune_keeps_a_post_that_still_holds_deferred_events() -> None:
     old = "2026-01-01T00:00:00+00:00"
     state = State(
