@@ -166,3 +166,20 @@ def test_every_shipped_firm_declares_a_timezone_decision() -> None:
         ZoneInfo(profile.timezone)  # raises if it is not a real zone
         assert profile.post_key_prefix, f"{name} has no post_key_prefix"
         assert profile.prompt_hints.strip(), f"{name} ships no prompt hints"
+
+
+def test_the_secret_scanner_pins_agree() -> None:
+    """CI and pre-commit must run the same gitleaks, and CI must verify its download."""
+    import re
+
+    ci = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    hooks = (REPO / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    version = re.search(r'GITLEAKS_VERSION: "([\d.]+)"', ci)
+    assert version, "ci.yml no longer pins GITLEAKS_VERSION"
+    assert f"rev: v{version.group(1)}" in hooks
+    assert re.search(r'GITLEAKS_SHA256: "[0-9a-f]{64}"', ci)
+    assert "sha256sum -c" in ci
+    # The allowlist is a single, known historical commit — nothing broader.
+    config = (REPO / ".gitleaks.toml").read_text(encoding="utf-8")
+    assert re.findall(r"[0-9a-f]{40}", config) == ["52240017a24655e565540a6c3ec011a6faf6d3b0"]
+    assert "paths" not in config and "regexes" not in config
