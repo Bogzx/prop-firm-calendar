@@ -170,6 +170,13 @@ def render_ics(
 
     selected: list[tuple[TrackedEvent, datetime, datetime, str]] = []
     present: list[str] = []
+    # FTMO re-announces a holiday schedule in a follow-up post, and each post
+    # tracks its own copy (event_key includes the post), so one window reached
+    # subscribers two or three times. The first post's copy wins: older posts
+    # come first in the state, so the survivor stays the same as posts arrive.
+    # Summary is part of the identity — two posts closing different symbols
+    # at the same minute are two events.
+    rendered: set[tuple[str, str, str, str, str]] = set()
     for post in state.posts.values():
         firm = state.firm_of(post, default_firm)
         if firms is not None and firm not in firms:
@@ -180,6 +187,10 @@ def render_ics(
                 continue  # pre-v2 state entry without display data
             if types is not None and event.event_type not in types:
                 continue
+            identity = (firm, event.event_type, event.start, event.end, event.summary)
+            if identity in rendered:
+                continue
+            rendered.add(identity)
             if firm and firm not in present:
                 present.append(firm)
             selected.append(
