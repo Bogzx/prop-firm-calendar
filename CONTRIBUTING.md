@@ -102,3 +102,8 @@ it must produce. If you change the prompt, the event taxonomy or validation,
 expect it to fail — and update the pinned JSON deliberately, in the same commit,
 so the behaviour change is visible in the diff rather than discovered by a
 subscriber.
+
+The goldens prove validation, never the model. When you change the prompt or
+a profile's `prompt_hints`, also run `prop-firm-calendar eval` (see the
+README's Development section) against a real model — or ask a maintainer to
+trigger the **LLM eval** workflow — and include its Markdown summary in the PR.
