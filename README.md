@@ -368,7 +368,8 @@ its source, `evidence` carries that quote.
 
 Responses carry `Access-Control-Allow-Origin: *` (callable from any web page;
 no cookies are read or set), `Cache-Control: public, max-age=300`, and an
-`ETag` — send it back as `If-None-Match` for a `304`. The API is versioned in
+weak `ETag` — send it back as `If-None-Match` for a `304` while the answer is
+unchanged (it ignores `generated_at`, so a 304 does not refresh that field). The API is versioned in
 the path; fields may be added to `v1`, never removed or renamed.
 
 ## Built-in statistics

@@ -61,8 +61,12 @@ def parse_instant(raw: str, name: str) -> datetime:
     try:
         if len(text) == 10:
             return datetime.combine(datetime.fromisoformat(text).date(), time(), tzinfo=UTC)
-        return _aware(datetime.fromisoformat(text))
-    except ValueError as e:
+        # Normalized here, where a bad value is still a 400: an offset that
+        # pushes 0001-01-01 or 9999-12-31 past the calendar raises
+        # OverflowError on conversion, which used to escape as a dropped
+        # connection.
+        return _aware(datetime.fromisoformat(text)).astimezone(UTC)
+    except (ValueError, OverflowError) as e:
         raise ApiError(f"{name}: expected an ISO 8601 date or timestamp, got {raw!r}") from e
 
 

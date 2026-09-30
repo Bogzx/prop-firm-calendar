@@ -272,6 +272,29 @@ def _age(now: datetime, stamp: str | None) -> float | None:
 SyncResult = Sequence[str] | object | None
 
 
+def _api_etag(payload: dict, *, defaulted_from: bool) -> str:
+    """A weak validator for what an API answer says, not when it was generated.
+
+    Hashing the body itself made the ETag change every second (`generated_at`,
+    and `filters.from` when it defaults to now), so If-None-Match could never
+    match outside a test with a frozen clock. Rows carry their `status`, so a
+    window going live or ending still changes the tag.
+    """
+    stable = {k: v for k, v in payload.items() if k != "generated_at"}
+    if defaulted_from and isinstance(stable.get("filters"), dict):
+        stable["filters"] = {**stable["filters"], "from": None}
+    digest = hashlib.sha256(json.dumps(stable, sort_keys=True).encode("utf-8")).hexdigest()
+    return f'W/"{digest[:32]}"'
+
+
+def _etag_matches(etag: str, if_none_match: str) -> bool:
+    """RFC 9110 weak comparison against an If-None-Match header."""
+    if if_none_match.strip() == "*":
+        return True
+    wanted = etag.removeprefix("W/")
+    return any(t.strip().removeprefix("W/") == wanted for t in if_none_match.split(","))
+
+
 def run_sync_loop(
     sync_fn: Callable[[], SyncResult],
     interval_seconds: float,
@@ -500,12 +523,12 @@ def make_handler(
                 self._api_json(404, {"error": "not found"}, [("Cache-Control", "no-store")])
                 return
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            etag = f'"{hashlib.sha256(body).hexdigest()[:32]}"'
+            etag = _api_etag(payload, defaulted_from="from" not in query)
             caching = [
                 ("Cache-Control", f"public, max-age={API_MAX_AGE_SECONDS}"),
                 ("ETag", etag),
             ]
-            if etag in [t.strip() for t in self.headers.get("If-None-Match", "").split(",")]:
+            if _etag_matches(etag, self.headers.get("If-None-Match", "")):
                 self.send_response(304)
                 for name, value in _CORS_HEADERS + caching:
                     self.send_header(name, value)
