@@ -233,3 +233,41 @@ def test_a_profile_given_by_path_is_named_as_its_posts_are(tmp_path: Path) -> No
     config = load_config(path, env={})
     assert cli._default_firm(config) == "myfirm"
     assert set(cli._firm_titles(config)) == {"myfirm"}
+
+
+def test_serve_wires_every_firm_into_the_feed_the_api_and_health(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The live code path: what `serve` hands the HTTP server, without serving."""
+    import prop_firm_calendar.server as server
+    from prop_firm_calendar.server import FeedSelection
+    from prop_firm_calendar.state import PostState, TrackedEvent, save_state
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        '[[firms]]\nprofile = "ftmo"\n[[firms]]\nprofile = "topstep"\n'
+        '[[firms]]\nprofile = "e8-markets"\nenabled = false\n[calendar]\nenabled = false\n',
+        encoding="utf-8",
+    )
+    event = TrackedEvent(
+        "k1", "ics:k1", "2026-11-26T23:59:00-06:00", "⏳ Early Close",
+        "2026-11-26T11:45:00-06:00", "early_close",
+    )  # fmt: skip
+    save_state(
+        State(posts={"topstep-holiday": PostState("h", NOW.isoformat(), [event], firm="topstep")}),
+        tmp_path / "state.json",
+    )
+    captured: dict = {}
+    monkeypatch.setattr(server, "serve_forever", lambda **kwargs: captured.update(kwargs) or 0)
+
+    assert cli.main(["--config", str(config_path), "serve", "--port", "9999"]) == 0
+    assert captured["port"] == 9999
+    assert captured["valid_firms"] == ["ftmo", "topstep"]  # disabled firms are not offered
+    assert captured["firm_titles"]["topstep"] == "Topstep"
+    assert captured["firm_urls"]["topstep"].startswith("https://help.topstep.com/")
+    assert captured["source_name"] == "FTMO, Topstep"
+    # Last-good data is published before the first sync, with per-firm links.
+    feed = (tmp_path / "ftmo-events.ics").read_text(encoding="utf-8").replace("\r\n ", "")
+    assert "Source: https://help.topstep.com/" in feed
+    filtered = captured["feed_renderer"](FeedSelection(firms=frozenset({"ftmo"}))).decode()
+    assert "BEGIN:VEVENT" not in filtered
