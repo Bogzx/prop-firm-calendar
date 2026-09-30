@@ -173,7 +173,8 @@ def request(url: str, method: str = "GET", headers: dict | None = None):
         with urllib.request.urlopen(req) as response:  # noqa: S310 - test-local http
             return response.status, dict(response.headers), response.read()
     except urllib.error.HTTPError as e:
-        return e.code, dict(e.headers), e.read()
+        with e:
+            return e.code, dict(e.headers), e.read()
 
 
 def test_events_over_http_with_cors_and_caching(base: str) -> None:
