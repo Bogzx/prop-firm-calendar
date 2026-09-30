@@ -130,7 +130,8 @@ def run_pipeline(
             continue
         report.posts_relevant += 1
 
-        if post_state is not None and post_state.content_hash == post.content_hash:
+        unchanged = post_state is not None and post_state.content_hash == post.content_hash
+        if post_state is not None and unchanged:
             if post_state.deferred is not None:
                 logger.info("Post %s unchanged; skipping LLM call", post.post_key)
                 report.posts_skipped_unchanged += 1
@@ -156,9 +157,14 @@ def run_pipeline(
         deferred = [r.raw for r in rejections if r.retryable]
         rejected = _count_rejections(post, rejections, report)
 
-        new_post_state = _reconcile(
-            post, events, post_state, sink, report, dry_run, now, config.events, state, firm
-        )
+        if post_state is not None and unchanged:
+            new_post_state = _add_recovered(
+                post, events, post_state, sink, report, dry_run, now, state, firm
+            )
+        else:
+            new_post_state = _reconcile(
+                post, events, post_state, sink, report, dry_run, now, config.events, state, firm
+            )
         new_post_state.firm = firm or (post_state.firm if post_state else "")
         new_post_state.url = post.url
         new_post_state.deferred = [raw.model_dump() for raw in deferred]
@@ -504,6 +510,56 @@ def _reconcile(
             tracked.append(published)
 
     return PostState(content_hash=post.content_hash, last_seen=now.isoformat(), events=tracked)
+
+
+def _add_recovered(
+    post: SourcePost,
+    events: list[TradingEvent],
+    post_state: PostState,
+    sink: EventSink,
+    report: RunReport,
+    dry_run: bool,
+    now: datetime,
+    state: State,
+    firm: str,
+) -> PostState:
+    """The one-time re-extraction of an unchanged pre-v5 post: add, never remove.
+
+    The text is byte-for-byte what was extracted before, so any difference
+    from the tracked events is the model's, not the firm's. Reconciling would
+    turn run-to-run drift (an end time read 30 minutes later) into a deleted
+    calendar entry and a new UID in every subscriber's calendar, for every
+    tracked post at once on the upgrade. So every tracked event is kept, and
+    only an event that overlaps nothing of its type already tracked is added:
+    what the old max_days_ahead cap dropped.
+    """
+    tracked = list(post_state.events)
+    report.events_kept += len(tracked)
+    for event in events:
+        if any(_overlaps(event, old) for old in post_state.events):
+            continue  # the same window, or the model's drifted reading of it
+        logger.info("Recovered %s from unchanged post %s", event.event_key, post.post_key)
+        published = _publish(event, sink, report, dry_run, state, firm, post.post_key)
+        if published is not None:
+            tracked.append(published)
+    return PostState(content_hash=post.content_hash, last_seen=now.isoformat(), events=tracked)
+
+
+def _overlaps(event: TradingEvent, tracked: TrackedEvent) -> bool:
+    if tracked.event_key == event.event_key:
+        return True
+    if tracked.event_type and tracked.event_type != event.event_type.value:
+        return False
+    try:
+        end = datetime.fromisoformat(tracked.end)
+        start = datetime.fromisoformat(tracked.start) if tracked.start else end
+    except ValueError:
+        return False
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=UTC)
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=UTC)
+    return event.start <= end and start <= event.end
 
 
 def _publish(
