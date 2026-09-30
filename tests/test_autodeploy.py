@@ -97,13 +97,18 @@ class FakeGitHub:
     def __init__(self) -> None:
         self.runs: list[dict] = []
         self.requests: list[str] = []
+        self.auth: list[str | None] = []
+        #: (status, raw body) to answer with instead of `runs`.
+        self.answer: tuple[int, bytes] | None = None
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:  # noqa: N802
                 outer.requests.append(self.path)
-                body = json.dumps({"workflow_runs": outer.runs}).encode()
-                self.send_response(200)
+                outer.auth.append(self.headers.get("Authorization"))
+                listing = json.dumps({"workflow_runs": outer.runs}).encode()
+                code, body = outer.answer or (200, listing)
+                self.send_response(code)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(body)
@@ -150,14 +155,18 @@ def deploy(tmp_path: Path):
     bin_dir.mkdir()
     docker_log = tmp_path / "docker.log"
     stub = bin_dir / "docker"
-    stub.write_text(f'#!/bin/sh\necho "$@" >> "{docker_log}"\n', encoding="utf-8")
+    stub.write_text(
+        f'#!/bin/sh\necho "$@" >> "{docker_log}"\n[ -z "$DOCKER_FAIL" ]\n', encoding="utf-8"
+    )
     stub.chmod(0o755)
 
     github = FakeGitHub()
 
     def invoke(**env: str) -> subprocess.CompletedProcess:
+        # A developer's real token must never reach the fake API.
+        inherited = {k: v for k, v in os.environ.items() if k != "GITHUB_TOKEN"}
         full_env = {
-            **os.environ,
+            **inherited,
             "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
             "GITHUB_API_URL": github.url,
             "AUTODEPLOY_REPO": "Bogzx/prop-firm-calendar",
@@ -238,3 +247,50 @@ def test_a_non_github_origin_needs_an_explicit_repo(deploy) -> None:
     assert result.returncode == 1
     assert "set AUTODEPLOY_REPO" in result.stderr
     assert head() != target
+
+
+@needs_tools
+@pytest.mark.parametrize(
+    ("code", "body"),
+    [
+        (403, b'{"message": "API rate limit exceeded for 203.0.113.9."}'),
+        (500, b"oops"),
+        (200, b"<html>captive portal</html>"),
+    ],
+)
+def test_an_unusable_api_answer_does_not_deploy(deploy, code: int, body: bytes) -> None:
+    """Rate limited, erroring or not JSON: the old version keeps running."""
+    invoke, github, head, target, docker_log = deploy
+    github.answer = (code, body)
+    result = invoke()
+    assert result.returncode == 1
+    assert "CI status unknown" in result.stderr
+    assert head() != target
+    assert not docker_log.exists()
+
+
+@needs_tools
+def test_the_token_is_sent_when_set_and_not_otherwise(deploy) -> None:
+    invoke, github, _head, _target, _log = deploy
+    github.runs = [run(1, "in_progress", None)]
+    invoke()
+    invoke(GITHUB_TOKEN="t0ken")
+    assert github.auth == [None, "Bearer t0ken"]
+
+
+@needs_tools
+def test_a_failed_build_is_retried_next_tick(deploy) -> None:
+    """Review: HEAD already matched origin after a failed build, so no retry ever came."""
+    invoke, github, head, target, docker_log = deploy
+    github.runs = [run(1, "completed", "success")]
+    before = head()
+    result = invoke(DOCKER_FAIL="1")
+    assert result.returncode == 1
+    assert "will retry next tick" in result.stderr
+    assert head() == before
+    # The old version was asked back up after the failed attempt.
+    assert docker_log.read_text(encoding="utf-8").splitlines() == ["compose up -d --build"] * 2
+
+    result = invoke()
+    assert result.returncode == 0, result.stderr
+    assert head() == target
