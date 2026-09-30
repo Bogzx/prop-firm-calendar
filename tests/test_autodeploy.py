@@ -176,6 +176,7 @@ def deploy(tmp_path: Path):
     target = git(work, "rev-parse", "HEAD")
     yield invoke, github, head, target, docker_log
     github.httpd.shutdown()
+    github.httpd.server_close()
 
 
 @needs_tools

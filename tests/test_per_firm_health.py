@@ -256,7 +256,8 @@ def get_bytes(url: str) -> tuple[int, bytes]:
         with urllib.request.urlopen(url) as response:  # noqa: S310 - test-local http
             return response.status, response.read()
     except urllib.error.HTTPError as e:
-        return e.code, e.read()
+        with e:
+            return e.code, e.read()
 
 
 def get(url: str) -> tuple[int, str]:

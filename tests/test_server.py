@@ -85,14 +85,16 @@ def server(tmp_path: Path):
     base = f"http://127.0.0.1:{httpd.server_address[1]}"
     yield base, status, ics_path, renders
     httpd.shutdown()
+    httpd.server_close()
 
 
 def get(url: str):
     try:
-        response = urllib.request.urlopen(url, timeout=5)
-        return response.status, response.headers.get("Content-Type", ""), response.read()
+        with urllib.request.urlopen(url, timeout=5) as response:
+            return response.status, response.headers.get("Content-Type", ""), response.read()
     except urllib.error.HTTPError as e:
-        return e.code, e.headers.get("Content-Type", ""), e.read()
+        with e:
+            return e.code, e.headers.get("Content-Type", ""), e.read()
 
 
 def test_healthz(server) -> None:
@@ -284,28 +286,31 @@ def test_unknown_path_404(server) -> None:
 
 
 def test_security_headers_present(server) -> None:
-    response = urllib.request.urlopen(f"{server[0]}/", timeout=5)
-    assert response.headers["X-Content-Type-Options"] == "nosniff"
-    assert response.headers["X-Frame-Options"] == "DENY"
-    assert "Python" not in (response.headers.get("Server") or "")
+    with urllib.request.urlopen(f"{server[0]}/", timeout=5) as response:
+        headers = response.headers
+    assert headers["X-Content-Type-Options"] == "nosniff"
+    assert headers["X-Frame-Options"] == "DENY"
+    assert "Python" not in (headers.get("Server") or "")
 
 
 def test_page_sets_visitor_cookie_once(server) -> None:
     base, _, _, _ = server
-    response = urllib.request.urlopen(f"{base}/", timeout=5)
-    set_cookie = response.headers.get("Set-Cookie", "")
+    with urllib.request.urlopen(f"{base}/", timeout=5) as response:
+        set_cookie = response.headers.get("Set-Cookie", "")
     assert "aftc_id=" in set_cookie and "HttpOnly" in set_cookie
     cookie_value = set_cookie.split(";", 1)[0]
     request = urllib.request.Request(f"{base}/", headers={"Cookie": cookie_value})
-    second = urllib.request.urlopen(request, timeout=5)
-    assert second.headers.get("Set-Cookie") is None  # known visitor: no new cookie
+    with urllib.request.urlopen(request, timeout=5) as second:
+        assert second.headers.get("Set-Cookie") is None  # known visitor: no new cookie
 
 
 def test_stats_endpoint_counts_visits_and_feed_pulls(server) -> None:
     base, _, _, _ = server
-    cookie = urllib.request.urlopen(f"{base}/", timeout=5).headers["Set-Cookie"].split(";")[0]
+    with urllib.request.urlopen(f"{base}/", timeout=5) as first:
+        cookie = first.headers["Set-Cookie"].split(";")[0]
     request = urllib.request.Request(f"{base}/", headers={"Cookie": cookie})
-    urllib.request.urlopen(request, timeout=5)  # same visitor again
+    with urllib.request.urlopen(request, timeout=5):  # same visitor again
+        pass
     get(f"{base}/feed.ics")
     payload = json.loads(get(f"{base}/stats")[2])
     assert payload["today"]["views"] >= 2
