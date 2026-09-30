@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ftmo_calendar.config import FirmConfig, ScrapeConfig, SourceConfig
-from ftmo_calendar.sources.base import HttpFetcher, shared_rate_limiter, shared_robots_policy
-from ftmo_calendar.sources.politeness import USER_AGENT
-from ftmo_calendar.sources.profile import SourceProfile, load_profile
-from ftmo_calendar.sources.web import WebSource
+from prop_firm_calendar.config import FirmConfig, ScrapeConfig, SourceConfig
+from prop_firm_calendar.sources.base import HttpFetcher, shared_rate_limiter, shared_robots_policy
+from prop_firm_calendar.sources.politeness import USER_AGENT
+from prop_firm_calendar.sources.profile import SourceProfile, load_profile
+from prop_firm_calendar.sources.web import WebSource
 
 
 @dataclass(frozen=True)

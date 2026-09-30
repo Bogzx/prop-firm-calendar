@@ -27,12 +27,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from ftmo_calendar.config import FTMO_PLATFORM_TZ, EventRules
-from ftmo_calendar.models import EventType
-from ftmo_calendar.parsing.llm import EventExtractor, RawEvent
-from ftmo_calendar.parsing.validate import validate_events
-from ftmo_calendar.pipeline import _is_relevant
-from ftmo_calendar.sources.ftmo import FtmoSource
+from prop_firm_calendar.config import FTMO_PLATFORM_TZ, EventRules
+from prop_firm_calendar.models import EventType
+from prop_firm_calendar.parsing.llm import EventExtractor, RawEvent
+from prop_firm_calendar.parsing.validate import validate_events
+from prop_firm_calendar.pipeline import _is_relevant
+from prop_firm_calendar.sources.ftmo import FtmoSource
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ftmo"
 URL = "https://ftmo.com/en/blog/trading-updates/trading-update-21-may-2026/"
@@ -94,7 +94,7 @@ def test_scraped_text_still_contains_every_announced_fact() -> None:
 
 def test_announcement_passes_the_keyword_gate() -> None:
     """The gate that decides whether the LLM is called at all."""
-    from ftmo_calendar.config import SourceConfig
+    from prop_firm_calendar.config import SourceConfig
 
     assert _is_relevant(POST, SourceConfig().keywords)
 

@@ -36,15 +36,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build image
-        run: docker build -t ftmo-calendar:ci .
+        run: docker build -t prop-firm-calendar:ci .
       - name: Smoke-test the entrypoint
-        run: docker run --rm ftmo-calendar:ci ftmo-calendar --version
+        run: |
+          docker run --rm prop-firm-calendar:ci prop-firm-calendar --version
+          # the pre-0.9 name must keep working for existing deployments
+          docker run --rm prop-firm-calendar:ci ftmo-calendar --version
       - name: Serve mode answers /healthz
         run: |
           mkdir -p data && chmod 777 data
           printf '[calendar]\nenabled = false\n[serve]\nsync_interval_minutes = 60\n' > data/config.toml
           docker run -d --name ftmo-ci -e LLM_API_KEY=ci-not-a-real-key \
-            -p 8080:8080 -v "$PWD/data:/data" ftmo-calendar:ci
+            -p 8080:8080 -v "$PWD/data:/data" prop-firm-calendar:ci
           for _ in $(seq 1 30); do
             code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/healthz || true)
             if [ -n "$code" ] && [ "$code" != "000" ]; then break; fi

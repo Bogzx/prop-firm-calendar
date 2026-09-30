@@ -1,8 +1,8 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from ftmo_calendar.models import EventType, TradingEvent
-from ftmo_calendar.sinks.google_calendar import PRIVATE_KEY_PROP, build_event_body
+from prop_firm_calendar.models import EventType, TradingEvent
+from prop_firm_calendar.sinks.google_calendar import PRIVATE_KEY_PROP, build_event_body
 
 TZ = ZoneInfo("Europe/Bucharest")
 EVENT = TradingEvent(

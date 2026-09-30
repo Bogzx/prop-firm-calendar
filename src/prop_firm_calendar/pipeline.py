@@ -11,12 +11,12 @@ from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
-from ftmo_calendar.config import AppConfig, EventRules
-from ftmo_calendar.models import SourcePost, TradingEvent
-from ftmo_calendar.parsing.llm import RawEvent
-from ftmo_calendar.parsing.validate import Rejection, validate_events
-from ftmo_calendar.sinks.base import EventSink
-from ftmo_calendar.state import PostState, State, TrackedEvent
+from prop_firm_calendar.config import AppConfig, EventRules
+from prop_firm_calendar.models import SourcePost, TradingEvent
+from prop_firm_calendar.parsing.llm import RawEvent
+from prop_firm_calendar.parsing.validate import Rejection, validate_events
+from prop_firm_calendar.sinks.base import EventSink
+from prop_firm_calendar.state import PostState, State, TrackedEvent
 
 logger = logging.getLogger(__name__)
 

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from ftmo_calendar.sources.ftmo import (
+from prop_firm_calendar.sources.ftmo import (
     FtmoSource,
     ScrapeError,
     parse_title_date,

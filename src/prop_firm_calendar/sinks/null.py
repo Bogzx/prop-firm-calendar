@@ -7,7 +7,7 @@ calendar and subscribers pull it over HTTP.
 
 from __future__ import annotations
 
-from ftmo_calendar.models import TradingEvent
+from prop_firm_calendar.models import TradingEvent
 
 
 class StateOnlySink:

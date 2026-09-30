@@ -286,7 +286,7 @@ def _validate(cfg: AppConfig) -> None:
             "no firms are enabled — every [[firms]] entry has enabled = false, "
             "so nothing would ever be scraped"
         )
-    from ftmo_calendar.sources.profile import load_profile
+    from prop_firm_calendar.sources.profile import load_profile
 
     for firm in cfg.firms:
         load_profile(firm.profile)  # raises ConfigError naming the unknown profile

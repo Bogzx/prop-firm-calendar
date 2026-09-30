@@ -20,10 +20,10 @@ from pathlib import Path
 
 import pytest
 
-from ftmo_calendar.firms import FirmOutcome
-from ftmo_calendar.server import FeedSelection, ServerStatus, make_handler, run_sync_loop
-from ftmo_calendar.state import PostState, State, TrackedEvent, save_state
-from ftmo_calendar.web import render_page
+from prop_firm_calendar.firms import FirmOutcome
+from prop_firm_calendar.server import FeedSelection, ServerStatus, make_handler, run_sync_loop
+from prop_firm_calendar.state import PostState, State, TrackedEvent, save_state
+from prop_firm_calendar.web import render_page
 
 NOW = datetime(2026, 6, 9, 12, 0, tzinfo=UTC)
 HOUR = 3600
@@ -213,7 +213,7 @@ def make_state() -> State:
 
 @pytest.fixture
 def server(tmp_path: Path):
-    from ftmo_calendar.sinks.ics import render_ics, write_ics
+    from prop_firm_calendar.sinks.ics import render_ics, write_ics
 
     state = make_state()
     state_path = tmp_path / "state.json"
@@ -226,7 +226,7 @@ def server(tmp_path: Path):
     seen: list[FeedSelection] = []
 
     def feed_renderer(selection: FeedSelection) -> bytes:
-        from ftmo_calendar.state import load_state
+        from prop_firm_calendar.state import load_state
 
         seen.append(selection)
         return render_ics(

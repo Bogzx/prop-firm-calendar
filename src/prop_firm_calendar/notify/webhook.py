@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import requests
 
-from ftmo_calendar.notify.base import EventPayload
+from prop_firm_calendar.notify.base import EventPayload
 
 
 class WebhookNotifier:

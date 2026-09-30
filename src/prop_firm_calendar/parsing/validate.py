@@ -8,9 +8,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from ftmo_calendar.config import EventRules
-from ftmo_calendar.models import EventType, SourcePost, TradingEvent
-from ftmo_calendar.parsing.llm import RawEvent
+from prop_firm_calendar.config import EventRules
+from prop_firm_calendar.models import EventType, SourcePost, TradingEvent
+from prop_firm_calendar.parsing.llm import RawEvent
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ def build_description(post: SourcePost) -> str:
     excerpt = post.text[:_EXCERPT_LIMIT]
     if len(post.text) > _EXCERPT_LIMIT:
         excerpt += "…"
-    return f"{excerpt}\n\nSource: {post.url}\nCreated by AutoFtmoCalendar"
+    return f"{excerpt}\n\nSource: {post.url}\nCreated by prop-firm-calendar"
 
 
 def validate_events(

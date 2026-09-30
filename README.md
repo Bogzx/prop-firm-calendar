@@ -1,6 +1,6 @@
 # prop-firm-calendar
 
-> Never get caught by an FTMO maintenance window again.
+> Never get caught by a prop firm's maintenance window or early close again.
 
 [![CI](https://github.com/Bogzx/prop-firm-calendar/actions/workflows/ci.yml/badge.svg)](https://github.com/Bogzx/prop-firm-calendar/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Bogzx/prop-firm-calendar)](https://github.com/Bogzx/prop-firm-calendar/releases)
@@ -22,11 +22,16 @@ https://calendar.bogdantruta.com/feed.ics
 appears on your phone automatically. ([Apple/Outlook instructions and
 per-event-type filters on the live page.](https://calendar.bogdantruta.com))
 
-AutoFtmoCalendar watches [FTMO's trading updates page](https://ftmo.com/en/trading-updates/),
-extracts scheduled platform maintenance and market closures with an LLM, and keeps a
-dedicated Google Calendar in sync — **including updating or removing events when FTMO
+prop-firm-calendar watches the announcement pages of **FTMO, Topstep, Blueberry
+Funded and E8 Markets**, extracts scheduled platform maintenance, market closures and
+early closes with an LLM, and publishes them as a subscribable ICS feed (and,
+optionally, a Google Calendar) — **including updating or removing events when a firm
 reschedules an announcement**. Events come with popup reminders, so you get warned
 *before* the platform goes down, not after.
+
+*Renamed in 0.9.0 from `ftmo-calendar` / AutoFtmoCalendar: the Python package is now
+`prop_firm_calendar` and the command `prop-firm-calendar`. The old command and import
+name still work as aliases.*
 
 ## Two ways to use it
 
@@ -128,9 +133,9 @@ pip install -e .
 cp .env.example .env                # add your LLM API key
 cp config.example.toml config.toml  # optional: tweak settings
 
-ftmo-calendar auth                  # one-time Google authorization (opens a browser)
-ftmo-calendar run --dry-run         # see what it would do
-ftmo-calendar run                   # sync for real
+prop-firm-calendar auth                  # one-time Google authorization (opens a browser)
+prop-firm-calendar run --dry-run         # see what it would do
+prop-firm-calendar run                   # sync for real
 ```
 
 ## Choosing an LLM provider
@@ -170,9 +175,9 @@ model in `models`.
    *Testing* status get refresh tokens that **expire every 7 days**, which is the
    usual cause of "it keeps asking me to log in". Publishing for personal use does
    not require verification (you'll just see an "unverified app" warning once).
-3. Run `ftmo-calendar auth`. A browser opens; grant access. The token is saved to
+3. Run `prop-firm-calendar auth`. A browser opens; grant access. The token is saved to
    `token.json` and auto-refreshes from then on.
-4. `ftmo-calendar auth --check` shows token health at any time.
+4. `prop-firm-calendar auth --check` shows token health at any time.
 
 The calendar named in `config.toml` (`Trading` by default) is found or created
 automatically.
@@ -209,14 +214,14 @@ WEBHOOK_URL="https://hooks.example.com/services/..."         # generic JSON POST
 You'll receive messages like:
 
 ```
-📅 FTMO Calendar updated
+📅 Trading calendar updated
 ➕ ⚠️ Platform Maintenance — Sat 06 Jun 08:00–14:00 +03
 
-⚠️ ftmo-calendar ran but the result looks wrong:
+⚠️ prop-firm-calendar ran but the result looks wrong:
 • keyword gate matched none of 4 scraped post(s) — the announcement wording
   or the page structure may have changed
 
-❌ ftmo-calendar run failed: OAuth token refresh failed (expired or revoked). ...
+❌ prop-firm-calendar run failed: OAuth token refresh failed (expired or revoked). ...
 ```
 
 This is the push that an ICS feed cannot give you: a subscriber's calendar app
@@ -228,7 +233,7 @@ want structure get the events too:
 ```json
 {
   "kind": "events",
-  "text": "📅 FTMO Calendar updated\n➕ ⚠️ Platform Maintenance — …",
+  "text": "📅 Trading calendar updated\n➕ ⚠️ Platform Maintenance — …",
   "created": ["⚠️ Platform Maintenance — Sat 06 Jun 08:00–14:00 +03"],
   "removed": [],
   "anomalies": []
@@ -247,7 +252,7 @@ times in `[calendar] timezone` with a matching `VTIMEZONE`, popup alarms
 matching `reminders_minutes`, a `REFRESH-INTERVAL` hint for subscribers, and a
 link to the event's own announcement in its description.
 
-`ftmo-calendar serve` exposes it over HTTP alongside operations endpoints:
+`prop-firm-calendar serve` exposes it over HTTP alongside operations endpoints:
 
 - `GET /feed.ics` — the calendar feed (add it as "subscribe by URL")
 - `GET /status` — shareable page: next event, sync health, age of the last
@@ -361,7 +366,7 @@ rather than published at a guessed hour.
 ### Adding another firm
 
 A source is a TOML file, not a Python module. Copy
-[`src/ftmo_calendar/sources/profiles/example-firm.toml`](src/ftmo_calendar/sources/profiles/example-firm.toml),
+[`src/prop_firm_calendar/sources/profiles/example-firm.toml`](src/prop_firm_calendar/sources/profiles/example-firm.toml),
 fill in the page's selectors, and record a fixture:
 
 ```bash
@@ -418,33 +423,33 @@ you on failure.
 **Linux (cron), every 6 hours:**
 
 ```cron
-0 */6 * * * cd /opt/AutoFtmoCalendar && .venv/bin/ftmo-calendar run >> cron.log 2>&1
+0 */6 * * * cd /opt/prop-firm-calendar && .venv/bin/prop-firm-calendar run >> cron.log 2>&1
 ```
 
 **Windows (Task Scheduler):**
 
 ```powershell
-schtasks /Create /TN "FTMO Calendar" /SC HOURLY /MO 6 `
-  /TR "C:\path\to\AutoFtmoCalendar\.venv\Scripts\ftmo-calendar.exe --config C:\path\to\AutoFtmoCalendar\config.toml run"
+schtasks /Create /TN "Prop Firm Calendar" /SC HOURLY /MO 6 `
+  /TR "C:\path\to\prop-firm-calendar\.venv\Scripts\prop-firm-calendar.exe --config C:\path\to\prop-firm-calendar\config.toml run"
 ```
 
 ## CLI reference
 
 | Command | What it does |
 | --- | --- |
-| `ftmo-calendar run` | Scrape, extract, and sync the calendar (default command) |
-| `ftmo-calendar run --dry-run` | Print planned creates/updates/deletes; touch nothing |
-| `ftmo-calendar auth` | One-time interactive Google authorization (OAuth mode) |
-| `ftmo-calendar auth --check` | Report credential/token health |
-| `ftmo-calendar status` | Show tracked posts and the events created for them |
-| `ftmo-calendar serve [--port N]` | Periodic sync + hosted ICS feed and status page |
+| `prop-firm-calendar run` | Scrape, extract, and sync the calendar (default command) |
+| `prop-firm-calendar run --dry-run` | Print planned creates/updates/deletes; touch nothing |
+| `prop-firm-calendar auth` | One-time interactive Google authorization (OAuth mode) |
+| `prop-firm-calendar auth --check` | Report credential/token health |
+| `prop-firm-calendar status` | Show tracked posts and the events created for them |
+| `prop-firm-calendar serve [--port N]` | Periodic sync + hosted ICS feed and status page |
 | `--config PATH` | Use a config file other than `./config.toml` |
 | `-v` | Debug logging |
 
 ## Troubleshooting
 
 - **"Token refresh failed" every week** → your OAuth app is in *Testing* status.
-  Publish it to Production (see setup above), then `ftmo-calendar auth` once more.
+  Publish it to Production (see setup above), then `prop-firm-calendar auth` once more.
   Or switch to a service account and never think about tokens again.
 - **"No trading-update posts found"** → FTMO changed their page structure. Please
   [open an issue](https://github.com/Bogzx/prop-firm-calendar/issues).

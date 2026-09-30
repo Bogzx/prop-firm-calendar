@@ -11,7 +11,7 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-from ftmo_calendar.config import DEFAULT_SUMMARIES, ServeConfig, load_config
+from prop_firm_calendar.config import DEFAULT_SUMMARIES, ServeConfig, load_config
 
 REPO = Path(__file__).parent.parent
 CONFIG_EXAMPLE = REPO / "config.example.toml"
@@ -118,7 +118,7 @@ def test_lint_tools_are_pinned_to_the_locked_versions() -> None:
 
 
 def _shipped_profiles() -> list[str]:
-    from ftmo_calendar.sources.profile import available_profiles
+    from prop_firm_calendar.sources.profile import available_profiles
 
     return [n for n in available_profiles() if n != "example-firm"]
 
@@ -158,7 +158,7 @@ def test_every_shipped_firm_declares_a_timezone_decision() -> None:
     """
     from zoneinfo import ZoneInfo
 
-    from ftmo_calendar.sources.profile import load_profile
+    from prop_firm_calendar.sources.profile import load_profile
 
     for name in _shipped_profiles():
         profile = load_profile(name)

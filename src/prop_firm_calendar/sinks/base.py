@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from ftmo_calendar.models import TradingEvent
+from prop_firm_calendar.models import TradingEvent
 
 
 class EventSink(Protocol):

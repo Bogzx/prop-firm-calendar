@@ -20,11 +20,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from ftmo_calendar.state import State, TrackedEvent
+from prop_firm_calendar.state import State, TrackedEvent
 
 logger = logging.getLogger(__name__)
 
-_PRODID = "-//AutoFtmoCalendar//ftmo-calendar//EN"
+_PRODID = "-//Bogzx//prop-firm-calendar//EN"
 
 
 def _escape(text: str) -> str:
@@ -231,6 +231,9 @@ def render_ics(
     for event, start_dt, end_dt, link in selected:
         lines += [
             "BEGIN:VEVENT",
+            # The pre-rename domain stays on purpose: UID is the identity
+            # subscribers' calendar apps key on, and changing it would
+            # duplicate every event already in their calendars.
             f"UID:{event.event_key}@ftmo-calendar",
             f"DTSTAMP:{dtstamp}",
             stamp("DTSTART", start_dt),
@@ -238,7 +241,7 @@ def render_ics(
             f"SUMMARY:{_escape(event.summary)}",
         ]
         if link:
-            lines.append(f"DESCRIPTION:Source: {_escape(link)}\\nCreated by AutoFtmoCalendar")
+            lines.append(f"DESCRIPTION:Source: {_escape(link)}\\nCreated by prop-firm-calendar")
         for minutes in reminders_minutes:
             lines += [
                 "BEGIN:VALARM",

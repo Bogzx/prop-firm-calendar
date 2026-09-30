@@ -1,11 +1,11 @@
-# AutoFtmoCalendar configuration. Every key is optional — these are the defaults.
+# prop-firm-calendar configuration. Every key is optional — these are the defaults.
 # Copy to config.toml and edit. Secrets do NOT go here; put them in .env.
 
 # ---------------------------------------------------------------------------
 # WHICH FIRMS TO TRACK
 # ---------------------------------------------------------------------------
 # Uncomment the [[firms]] block below to track several prop firms at once. Each
-# entry names a profile in src/ftmo_calendar/sources/profiles/ (or a path to
+# entry names a profile in src/prop_firm_calendar/sources/profiles/ (or a path to
 # your own .toml). Everything else is optional: leave a firm's timezone and
 # keywords unset and its profile decides, which is what makes adding a firm a
 # config change rather than a code change.
@@ -54,7 +54,7 @@ user_agent = ""                     # blank = the identifying default,
 
 [source]
 profile = "ftmo"                # which prop firm: a TOML file in
-                                # src/ftmo_calendar/sources/profiles/, or a path
+                                # src/prop_firm_calendar/sources/profiles/, or a path
                                 # to your own. See example-firm.toml there for a
                                 # template — a new firm needs no Python.
 url = "https://ftmo.com/en/trading-updates/"
@@ -109,7 +109,7 @@ enabled = false                 # also write an .ics feed file every run
 path = "ftmo-events.ics"
 
 [serve]
-host = "0.0.0.0"                # used by `ftmo-calendar serve`
+host = "0.0.0.0"                # used by `prop-firm-calendar serve`
 port = 8080
 sync_interval_minutes = 360     # sync every 6 hours. /healthz returns 503 once a
                                 # successful sync is more than 2 intervals old.

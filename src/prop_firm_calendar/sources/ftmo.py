@@ -10,15 +10,15 @@ a profile TOML and a fixture. See sources/profiles/example-firm.toml.
 
 from __future__ import annotations
 
-from ftmo_calendar.sources.base import (
+from prop_firm_calendar.sources.base import (
     USER_AGENT,
     FetchError,
     ScrapeError,
     parse_title_date,
     post_key_for,
 )
-from ftmo_calendar.sources.profile import load_profile
-from ftmo_calendar.sources.web import WebSource
+from prop_firm_calendar.sources.profile import load_profile
+from prop_firm_calendar.sources.web import WebSource
 
 __all__ = [
     "USER_AGENT",

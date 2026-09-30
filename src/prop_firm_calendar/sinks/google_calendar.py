@@ -7,8 +7,8 @@ import logging
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from ftmo_calendar.config import CalendarConfig
-from ftmo_calendar.models import TradingEvent
+from prop_firm_calendar.config import CalendarConfig
+from prop_firm_calendar.models import TradingEvent
 
 logger = logging.getLogger(__name__)
 

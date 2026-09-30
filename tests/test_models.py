@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from ftmo_calendar.models import EventType, SourcePost, TradingEvent
+from prop_firm_calendar.models import EventType, SourcePost, TradingEvent
 
 
 def make_event(**overrides) -> TradingEvent:

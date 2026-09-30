@@ -23,7 +23,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ftmo_calendar.config import ConfigError
+from prop_firm_calendar.config import ConfigError
 
 PROFILE_DIR = Path(__file__).parent / "profiles"
 

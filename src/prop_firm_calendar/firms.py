@@ -19,12 +19,12 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from ftmo_calendar.config import AppConfig, FirmConfig
-from ftmo_calendar.pipeline import RunReport, run_pipeline
-from ftmo_calendar.sinks.base import EventSink
-from ftmo_calendar.sources.factory import ResolvedFirm, resolve_firm
-from ftmo_calendar.sources.politeness import stagger
-from ftmo_calendar.state import State
+from prop_firm_calendar.config import AppConfig, FirmConfig
+from prop_firm_calendar.pipeline import RunReport, run_pipeline
+from prop_firm_calendar.sinks.base import EventSink
+from prop_firm_calendar.sources.factory import ResolvedFirm, resolve_firm
+from prop_firm_calendar.sources.politeness import stagger
+from prop_firm_calendar.state import State
 
 logger = logging.getLogger(__name__)
 

@@ -1,4 +1,4 @@
-"""Command-line interface: ftmo-calendar run|auth|status|serve."""
+"""Command-line interface: prop-firm-calendar run|auth|status|serve."""
 
 from __future__ import annotations
 
@@ -12,10 +12,10 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from ftmo_calendar import __version__
-from ftmo_calendar.config import AppConfig, ConfigError, load_config
-from ftmo_calendar.firms import MultiRunReport
-from ftmo_calendar.notify.base import (
+from prop_firm_calendar import __version__
+from prop_firm_calendar.config import AppConfig, ConfigError, load_config
+from prop_firm_calendar.firms import MultiRunReport
+from prop_firm_calendar.notify.base import (
     EventPayload,
     Notifier,
     format_anomaly_message,
@@ -24,9 +24,9 @@ from ftmo_calendar.notify.base import (
     format_run_message,
     notify_all,
 )
-from ftmo_calendar.notify.factory import make_notifiers
-from ftmo_calendar.pipeline import RunReport
-from ftmo_calendar.state import State
+from prop_firm_calendar.notify.factory import make_notifiers
+from prop_firm_calendar.pipeline import RunReport
+from prop_firm_calendar.state import State
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +37,8 @@ EXIT_CONFIG = 2
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="ftmo-calendar",
-        description="Sync FTMO trading updates (maintenance, closures) to Google Calendar.",
+        prog="prop-firm-calendar",
+        description="Sync prop-firm trading interruptions (maintenance, closures) to a calendar.",
     )
     parser.add_argument(
         "--config",
@@ -50,7 +50,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
     subparsers = parser.add_subparsers(dest="command")
 
-    run_parser = subparsers.add_parser("run", help="check FTMO and sync the calendar (default)")
+    run_parser = subparsers.add_parser(
+        "run", help="check every configured firm and sync the calendar (default)"
+    )
     run_parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -120,13 +122,13 @@ def _build_sink(config: AppConfig, dry_run: bool):  # noqa: ANN202
     neither should require any Google setup.
     """
     if dry_run or not config.calendar.enabled:
-        from ftmo_calendar.sinks.null import StateOnlySink
+        from prop_firm_calendar.sinks.null import StateOnlySink
 
         if not config.calendar.enabled:
             logger.info("Calendar sync disabled — feed-only mode")
         return StateOnlySink()
-    from ftmo_calendar.sinks.auth import load_credentials
-    from ftmo_calendar.sinks.google_calendar import GoogleCalendarSink
+    from prop_firm_calendar.sinks.auth import load_credentials
+    from prop_firm_calendar.sinks.google_calendar import GoogleCalendarSink
 
     credentials = load_credentials(config.calendar, config.base_dir)
     return GoogleCalendarSink(credentials, config.calendar)
@@ -134,7 +136,7 @@ def _build_sink(config: AppConfig, dry_run: bool):  # noqa: ANN202
 
 def _firm_titles(config: AppConfig) -> dict[str, str]:
     """profile name -> display name, for naming feeds and the status page."""
-    from ftmo_calendar.sources.profile import load_profile
+    from prop_firm_calendar.sources.profile import load_profile
 
     titles: dict[str, str] = {}
     for firm in config.firms:
@@ -153,7 +155,7 @@ def _firm_urls(config: AppConfig) -> dict[str, str]:
     `config.source.url`: that is FTMO's page, and with several firms it sent
     every subscriber to FTMO whatever firm the event came from.
     """
-    from ftmo_calendar.sources.profile import load_profile
+    from prop_firm_calendar.sources.profile import load_profile
 
     urls: dict[str, str] = {}
     for firm in config.firms:
@@ -175,7 +177,7 @@ def _default_firm(config: AppConfig) -> str:
 
 
 def _write_feed(config: AppConfig, state: State) -> None:
-    from ftmo_calendar.sinks.ics import write_ics
+    from prop_firm_calendar.sinks.ics import write_ics
 
     write_ics(
         state,
@@ -197,10 +199,10 @@ def _run_sync(config: AppConfig, dry_run: bool) -> MultiRunReport:
     predating `[[firms]]` produces — this is the previous behaviour: one
     pipeline run, and a scrape failure still propagates out of here.
     """
-    from ftmo_calendar.firms import run_firms
-    from ftmo_calendar.parsing.factory import make_backend
-    from ftmo_calendar.parsing.llm import EventExtractor
-    from ftmo_calendar.state import load_state, save_state
+    from prop_firm_calendar.firms import run_firms
+    from prop_firm_calendar.parsing.factory import make_backend
+    from prop_firm_calendar.parsing.llm import EventExtractor
+    from prop_firm_calendar.state import load_state, save_state
 
     if not config.calendar.enabled:
         # Without Google, the ICS feed is the only output — force it on.
@@ -250,7 +252,7 @@ def _cmd_run(config: AppConfig, dry_run: bool) -> int:
 
 
 def _cmd_auth(config: AppConfig, check: bool) -> int:
-    from ftmo_calendar.sinks.auth import describe_credentials, interactive_auth
+    from prop_firm_calendar.sinks.auth import describe_credentials, interactive_auth
 
     if not config.calendar.enabled:
         print("Calendar sync is disabled ([calendar] enabled = false) — no Google auth needed.")
@@ -268,7 +270,7 @@ def _cmd_auth(config: AppConfig, check: bool) -> int:
 
 
 def _cmd_serve(config: AppConfig, port_override: int | None) -> int:
-    from ftmo_calendar.server import FeedSelection, check_writable, serve_forever
+    from prop_firm_calendar.server import FeedSelection, check_writable, serve_forever
 
     # Before anything else: if the data directory is not writable, nothing this
     # process does will ever be saved. Say so now, not after hours of a
@@ -280,7 +282,7 @@ def _cmd_serve(config: AppConfig, port_override: int | None) -> int:
 
     # Serve last-good data immediately: the feed must not 404 after a restart
     # just because the most recent sync attempt failed.
-    from ftmo_calendar.state import load_state
+    from prop_firm_calendar.state import load_state
 
     existing_state = load_state(config.state_path)
     if existing_state.posts:
@@ -297,8 +299,8 @@ def _cmd_serve(config: AppConfig, port_override: int | None) -> int:
     default_firm = _default_firm(config)
 
     def feed_renderer(selection: FeedSelection) -> bytes:
-        from ftmo_calendar.sinks.ics import render_ics
-        from ftmo_calendar.state import load_state
+        from prop_firm_calendar.sinks.ics import render_ics
+        from prop_firm_calendar.state import load_state
 
         return render_ics(
             load_state(config.state_path),
@@ -312,7 +314,7 @@ def _cmd_serve(config: AppConfig, port_override: int | None) -> int:
             tz_name=config.calendar.timezone,
         ).encode("utf-8")
 
-    from ftmo_calendar.stats import StatsStore
+    from prop_firm_calendar.stats import StatsStore
 
     names = [f.profile for f in config.enabled_firms]
     return serve_forever(
@@ -331,7 +333,7 @@ def _cmd_serve(config: AppConfig, port_override: int | None) -> int:
 
 
 def _cmd_status(config: AppConfig) -> int:
-    from ftmo_calendar.state import load_state
+    from prop_firm_calendar.state import load_state
 
     state = load_state(config.state_path)
     if not state.posts:
@@ -367,7 +369,7 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("Configuration error: %s", e)
         return EXIT_CONFIG
 
-    from ftmo_calendar.sinks.auth import AuthError
+    from prop_firm_calendar.sinks.auth import AuthError
 
     command = args.command or "run"
     try:

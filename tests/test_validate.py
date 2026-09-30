@@ -1,10 +1,10 @@
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
-from ftmo_calendar.config import EventRules
-from ftmo_calendar.models import EventType, SourcePost
-from ftmo_calendar.parsing.llm import RawEvent
-from ftmo_calendar.parsing.validate import validate_events
+from prop_firm_calendar.config import EventRules
+from prop_firm_calendar.models import EventType, SourcePost
+from prop_firm_calendar.parsing.llm import RawEvent
+from prop_firm_calendar.parsing.validate import validate_events
 
 TZ = ZoneInfo("Europe/Bucharest")
 NOW = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)

@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from ftmo_calendar.sources.base import HttpFetcher, shared_rate_limiter, shared_robots_policy
-from ftmo_calendar.sources.politeness import (
+from prop_firm_calendar.sources.base import HttpFetcher, shared_rate_limiter, shared_robots_policy
+from prop_firm_calendar.sources.politeness import (
     MAX_HONOURED_CRAWL_DELAY,
     PROJECT_UA_TOKEN,
     USER_AGENT,

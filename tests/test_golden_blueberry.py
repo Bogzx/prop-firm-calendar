@@ -16,13 +16,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from ftmo_calendar.config import FTMO_PLATFORM_TZ, EventRules
-from ftmo_calendar.models import EventType
-from ftmo_calendar.parsing.llm import RawEvent
-from ftmo_calendar.parsing.validate import validate_events
-from ftmo_calendar.pipeline import _is_relevant
-from ftmo_calendar.sources.profile import load_profile
-from ftmo_calendar.sources.web import WebSource
+from prop_firm_calendar.config import FTMO_PLATFORM_TZ, EventRules
+from prop_firm_calendar.models import EventType
+from prop_firm_calendar.parsing.llm import RawEvent
+from prop_firm_calendar.parsing.validate import validate_events
+from prop_firm_calendar.pipeline import _is_relevant
+from prop_firm_calendar.sources.profile import load_profile
+from prop_firm_calendar.sources.web import WebSource
 
 FIXTURES = Path(__file__).parent / "fixtures" / "blueberry-funded"
 PROFILE = load_profile("blueberry-funded")

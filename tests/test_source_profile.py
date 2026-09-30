@@ -6,15 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from ftmo_calendar.config import ConfigError, SourceConfig
-from ftmo_calendar.sources.factory import make_source, resolve_source_settings
-from ftmo_calendar.sources.profile import (
+from prop_firm_calendar.config import ConfigError, SourceConfig
+from prop_firm_calendar.sources.factory import make_source, resolve_source_settings
+from prop_firm_calendar.sources.profile import (
     PROFILE_DIR,
     available_profiles,
     load_profile,
     profile_from_dict,
 )
-from ftmo_calendar.sources.web import ScrapeError, WebSource
+from prop_firm_calendar.sources.web import ScrapeError, WebSource
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ftmo"
 

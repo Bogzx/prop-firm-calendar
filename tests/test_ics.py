@@ -1,8 +1,8 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ftmo_calendar.sinks.ics import render_ics, write_ics
-from ftmo_calendar.state import PostState, State, TrackedEvent
+from prop_firm_calendar.sinks.ics import render_ics, write_ics
+from prop_firm_calendar.state import PostState, State, TrackedEvent
 
 NOW = datetime(2026, 6, 9, 12, 0, tzinfo=UTC)
 
@@ -133,7 +133,7 @@ def test_no_refresh_hints_by_default() -> None:
 def test_description_with_source_url() -> None:
     ics = render_ics(make_state(), (), source_url="https://ftmo.com/en/trading-updates/", now=NOW)
     assert "DESCRIPTION:Source: https://ftmo.com/en/trading-updates/" in ics
-    assert "AutoFtmoCalendar" in ics
+    assert "Created by prop-firm-calendar" in ics
 
 
 def crypto_event() -> TrackedEvent:
