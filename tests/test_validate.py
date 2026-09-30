@@ -238,6 +238,37 @@ def test_a_too_short_quote_is_not_evidence() -> None:
     assert not evidence_supported("November 26 11:46 CT", TABLE_POST.text)
 
 
+def test_a_short_verbatim_quote_is_not_flagged_unconfirmed() -> None:
+    """Review: "Christmas Day | Markets closed" style rows were published as (unconfirmed).
+
+    The prompt asks for the shortest passage; a genuine three-word table row
+    is too short to prove anything, but it is no sign of invention either.
+    """
+    [event], rejections = run_on(TABLE_POST, [ts_raw(evidence="Christmas Day | Friday")])
+    assert rejections == []
+    assert event.confidence == "high"
+    assert not event.summary.endswith("(unconfirmed)")
+    assert event.evidence == ""  # too short to show as proof
+    # Under require_evidence it is still not enough.
+    _, [rejection] = run_on(
+        TABLE_POST, [ts_raw(evidence="Christmas Day | Friday")], EventRules(require_evidence=True)
+    )
+    assert "too short" in rejection.reason
+
+
+def test_invisible_in_word_characters_do_not_break_a_quote() -> None:
+    """Review: a soft hyphen (&shy;) in the scraped HTML split the word the model quoted."""
+    from prop_firm_calendar.parsing.validate import evidence_supported
+
+    text = "Main­tenance of the cTrader⁠ platform on Saturday 08:00‍ GMT+3"
+    assert evidence_supported("Maintenance of the cTrader platform on Saturday", text)
+    assert evidence_supported("cTrader platform on Saturday 08:00", text)
+    # NBSP and dash variants were already fine; keep it that way.
+    assert evidence_supported(
+        "Monday, 25 May 2026 - Memorial Day", "Monday, 25 May 2026 – Memorial Day"
+    )
+
+
 def test_a_post_without_text_cannot_refute_its_quote() -> None:
     """Deferred events re-validated after their post left the index page."""
     stub = SourcePost(post_key="topstep-holiday", title="", text="", url=TABLE_POST.url)
