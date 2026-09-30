@@ -130,8 +130,15 @@ def test_no_refresh_hints_by_default() -> None:
     assert "REFRESH-INTERVAL" not in ics
 
 
+def unfold(ics: str) -> str:
+    """What every reader does first (RFC 5545 §3.1)."""
+    return ics.replace("\r\n ", "")
+
+
 def test_description_with_source_url() -> None:
-    ics = render_ics(make_state(), (), source_url="https://ftmo.com/en/trading-updates/", now=NOW)
+    ics = unfold(
+        render_ics(make_state(), (), source_url="https://ftmo.com/en/trading-updates/", now=NOW)
+    )
     assert "DESCRIPTION:Source: https://ftmo.com/en/trading-updates/" in ics
     assert "Created by prop-firm-calendar" in ics
 
@@ -198,7 +205,7 @@ def _post(firm: str, key: str, url: str = "") -> PostState:
 def _descriptions(ics: str) -> dict[str, str]:
     """UID key -> DESCRIPTION line of that VEVENT."""
     found: dict[str, str] = {}
-    for block in ics.split("BEGIN:VEVENT")[1:]:
+    for block in unfold(ics).split("BEGIN:VEVENT")[1:]:
         lines = block.split("\r\n")
         uid = next(line for line in lines if line.startswith("UID:"))[4:].split("@")[0]
         found[uid] = next((line for line in lines if line.startswith("DESCRIPTION:Source")), "")
@@ -254,8 +261,22 @@ def test_a_window_announced_by_two_posts_appears_once() -> None:
 def test_the_verified_quote_is_in_the_description_escaped() -> None:
     post = _post("topstep", "k-q", "https://help.topstep.com/x")
     post.events[0].evidence = "Thanksgiving; November 26, 11:45 CT"
-    ics = render_ics(State(posts={"a": post}), (), now=NOW)
+    ics = unfold(render_ics(State(posts={"a": post}), (), now=NOW))
     assert (
-        "DESCRIPTION:“Thanksgiving\; November 26\\, 11:45 CT”\\n"
+        "DESCRIPTION:\u201cThanksgiving\\; November 26\\, 11:45 CT\u201d\\n"
         "Source: https://help.topstep.com/x\\nCreated by prop-firm-calendar"
     ) in ics
+
+
+def test_long_lines_are_folded_at_75_octets_without_splitting_characters() -> None:
+    post = _post("topstep", "k-long", "https://help.topstep.com/" + "a" * 60)
+    post.events[0].summary = "🏖️ Closed All Day — " + "Équités ✓ " * 12
+    post.events[0].evidence = "Thanksgiving Thursday, November 26 11:45 CT — " * 4
+    ics = render_ics(State(posts={"a": post}), (60,), now=NOW)
+    physical = ics.split("\r\n")
+    assert max(len(line.encode("utf-8")) for line in physical) <= 75
+    assert any(line.startswith(" ") for line in physical)  # it did fold
+    # Unfolding restores exactly the logical lines.
+    logical = unfold(ics)
+    assert "SUMMARY:🏖️ Closed All Day — " + "Équités ✓ " * 11 + "Équités ✓" in logical
+    assert "Source: https://help.topstep.com/" + "a" * 60 in logical

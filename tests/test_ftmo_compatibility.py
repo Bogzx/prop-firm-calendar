@@ -60,12 +60,14 @@ BASE_POST_KEY = "trading-update-2026-05-21"
 BASE_CONTENT_HASH = "ff8a9aa853546e3d1a5e765342dfadb8b737b66e1720e681f436c625fd9f8ffa"
 BASE_ICS_SHA256 = "7e5402e7b1b8a7509a1a91e567e2fa22c8f1dcf0b9bf565e4d0152a149841485"
 
-# 0.9.0 renamed the project, which moved exactly two strings in the feed: the
-# PRODID and the "Created by" credit in each DESCRIPTION. Neither is identity —
-# apps match events on UID, which is untouched — and undoing just those two
-# substitutions reproduces BASE_ICS_SHA256 exactly (asserted below), so nothing
-# else in the bytes moved.
-CURRENT_ICS_SHA256 = "49adeee0acba1a8f4fec20b32b2652f1d9f7e725c28d54a87793b545f20ae12b"
+# 0.9.0 changed the bytes in exactly two ways, neither of them identity (apps
+# match events on UID, which is untouched):
+# - the rename moved two strings, the PRODID and the "Created by" credit;
+# - lines over 75 octets are now folded (RFC 5545 §3.1), which every reader
+#   undoes before parsing.
+# Unfolding and undoing those two substitutions reproduces BASE_ICS_SHA256
+# exactly (asserted below), so nothing else in the feed moved.
+CURRENT_ICS_SHA256 = "9d0f38f2e0925c0520b8417e99c3ba6b66284c846f43a981a1910ee16431e480"
 RENAMED = (
     ("PRODID:-//Bogzx//prop-firm-calendar//EN", "PRODID:-//AutoFtmoCalendar//ftmo-calendar//EN"),
     ("Created by prop-firm-calendar", "Created by AutoFtmoCalendar"),
@@ -73,6 +75,7 @@ RENAMED = (
 
 
 def _as_before_the_rename(ics: str) -> str:
+    ics = ics.replace("\r\n ", "")  # unfold
     for new, old in RENAMED:
         ics = ics.replace(new, old)
     return ics

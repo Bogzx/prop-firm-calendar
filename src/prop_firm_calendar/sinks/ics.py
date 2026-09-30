@@ -34,6 +34,31 @@ def _escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
 
 
+_FOLD_OCTETS = 75
+
+
+def _fold(line: str) -> str:
+    """RFC 5545 §3.1: lines longer than 75 octets continue on "CRLF SPACE".
+
+    Split on UTF-8 octets, never inside a character (event titles carry
+    emoji). Readers unfold before parsing, so the content is unchanged;
+    strict parsers otherwise truncate or reject long DESCRIPTION lines.
+    """
+    data = line.encode("utf-8")
+    if len(data) <= _FOLD_OCTETS:
+        return line
+    parts: list[str] = []
+    limit = _FOLD_OCTETS  # the first line has 75 octets; continuations 74 + the space
+    while data:
+        cut = min(limit, len(data))
+        while cut < len(data) and (data[cut] & 0xC0) == 0x80:
+            cut -= 1  # back off to the start of a UTF-8 character
+        parts.append(data[:cut].decode("utf-8"))
+        data = data[cut:]
+        limit = _FOLD_OCTETS - 1
+    return "\r\n ".join(parts)
+
+
 def _ics_offset(offset: timedelta) -> str:
     total = round(offset.total_seconds())
     sign = "+" if total >= 0 else "-"
@@ -268,7 +293,7 @@ def render_ics(
             ]
         lines.append("END:VEVENT")
     lines.append("END:VCALENDAR")
-    return "\r\n".join(lines) + "\r\n"
+    return "\r\n".join(_fold(line) for line in lines) + "\r\n"
 
 
 def write_ics(
