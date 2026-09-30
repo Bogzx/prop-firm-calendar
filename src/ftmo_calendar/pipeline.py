@@ -9,10 +9,12 @@ from datetime import UTC, datetime
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
+from pydantic import ValidationError
+
 from ftmo_calendar.config import AppConfig, EventRules
 from ftmo_calendar.models import SourcePost, TradingEvent
 from ftmo_calendar.parsing.llm import RawEvent
-from ftmo_calendar.parsing.validate import validate_events
+from ftmo_calendar.parsing.validate import Rejection, validate_events
 from ftmo_calendar.sinks.base import EventSink
 from ftmo_calendar.state import PostState, State, TrackedEvent
 
@@ -40,6 +42,9 @@ class RunReport:
     events_deleted: int = 0
     events_kept: int = 0
     rejections: int = 0
+    #: Extractions held back for being beyond max_days_ahead; see
+    #: PostState.deferred.
+    events_deferred: int = 0
     dry_run: bool = False
     created_lines: list[str] = field(default_factory=list)
     deleted_lines: list[str] = field(default_factory=list)
@@ -65,6 +70,8 @@ class RunReport:
             f"{self.events_deleted} removed, {self.events_kept} kept, "
             f"{self.rejections} rejected extractions"
         )
+        if self.events_deferred:
+            text += f", {self.events_deferred} deferred (beyond max_days_ahead)"
         if self.anomalies:
             text += f" | {len(self.anomalies)} anomaly/anomalies: " + "; ".join(self.anomalies)
         return text
@@ -99,6 +106,8 @@ def run_pipeline(
 
     posts = source.fetch()
     report.posts_seen = len(posts)
+    seen = {post.post_key: post for post in posts}
+    extracted: set[str] = set()
 
     for post in posts:
         post_state = state.posts.get(post.post_key)
@@ -116,9 +125,16 @@ def run_pipeline(
         report.posts_relevant += 1
 
         if post_state is not None and post_state.content_hash == post.content_hash:
-            logger.info("Post %s unchanged; skipping LLM call", post.post_key)
-            report.posts_skipped_unchanged += 1
-            continue
+            if post_state.deferred is not None:
+                logger.info("Post %s unchanged; skipping LLM call", post.post_key)
+                report.posts_skipped_unchanged += 1
+                continue
+            # Written before far-future events were kept: whatever this post
+            # extracted beyond max_days_ahead back then was dropped, and an
+            # unchanged hash would never bring it back. Extract it once more.
+            logger.info(
+                "Post %s predates deferred-event tracking; re-extracting once", post.post_key
+            )
 
         logger.info("Post %s is new or changed; extracting events", post.post_key)
         raw_events = extractor.extract(post.text)
@@ -131,23 +147,104 @@ def run_pipeline(
             now=now,
             require_stated_offset=require_stated_offset,
         )
-        report.rejections += len(rejections)
-        for rejection in rejections:
-            logger.warning("Rejected extraction for %s: %s", post.post_key, rejection.reason)
+        deferred = [r.raw for r in rejections if r.retryable]
+        _count_rejections(post, rejections, report)
 
         new_post_state = _reconcile(
             post, events, post_state, sink, report, dry_run, now, config.events
         )
         new_post_state.firm = firm or (post_state.firm if post_state else "")
         new_post_state.url = post.url
+        new_post_state.deferred = [raw.model_dump() for raw in deferred]
         if not dry_run:
             state.posts[post.post_key] = new_post_state
+        extracted.add(post.post_key)
+
+    # Far-future events come within range by the calendar alone, with the post
+    # unchanged — or already gone from the index page (FTMO only lists recent
+    # posts). Re-validate what each of this firm's posts is holding back.
+    for key, held in list(state.posts.items()):
+        if held.deferred and held.firm == firm and key not in extracted:
+            _promote_deferred(
+                seen.get(key) or SourcePost(post_key=key, title="", text="", url=held.url),
+                held,
+                sink,
+                report,
+                dry_run,
+                config.events,
+                source_tz,
+                calendar_tz,
+                now,
+                require_stated_offset,
+            )
 
     _detect_anomalies(report, gate)
 
     if not dry_run:
         state.prune(now=now)
     return report
+
+
+def _count_rejections(post: SourcePost, rejections: list[Rejection], report: RunReport) -> None:
+    for rejection in rejections:
+        if rejection.retryable:
+            report.events_deferred += 1
+            logger.info(
+                "Deferred %s %s from %s: %s; will re-check each run",
+                rejection.raw.event_type,
+                rejection.raw.start_time,
+                post.post_key,
+                rejection.reason,
+            )
+        else:
+            report.rejections += 1
+            logger.warning("Rejected extraction for %s: %s", post.post_key, rejection.reason)
+
+
+def _promote_deferred(
+    post: SourcePost,
+    post_state: PostState,
+    sink: EventSink,
+    report: RunReport,
+    dry_run: bool,
+    rules: EventRules,
+    source_tz: ZoneInfo,
+    calendar_tz: ZoneInfo,
+    now: datetime,
+    require_stated_offset: bool,
+) -> None:
+    """Publish held-back events that are now within max_days_ahead. No LLM call."""
+    raws: list[RawEvent] = []
+    for item in post_state.deferred or []:
+        try:
+            raws.append(RawEvent.model_validate(item))
+        except ValidationError as e:
+            logger.warning("Dropping unreadable deferred event on %s: %s", post.post_key, e)
+    events, rejections = validate_events(
+        raws,
+        post,
+        rules,
+        source_tz,
+        calendar_tz,
+        now=now,
+        require_stated_offset=require_stated_offset,
+    )
+    still_deferred = [r.raw for r in rejections if r.retryable]
+    # Only what changed state counts: a still-deferred event was already
+    # counted on the run that extracted it.
+    _count_rejections(post, [r for r in rejections if not r.retryable], report)
+    known = {e.event_key for e in post_state.events}
+    promoted: list[TrackedEvent] = []
+    for event in events:
+        if event.event_key in known:
+            continue
+        logger.info("Deferred event %s is now within range; publishing", event.event_key)
+        tracked = _publish(event, sink, report, dry_run)
+        if tracked is not None:
+            promoted.append(tracked)
+    if not dry_run:
+        post_state.events.extend(promoted)
+        post_state.deferred = [raw.model_dump() for raw in still_deferred]
 
 
 def _detect_anomalies(report: RunReport, keywords: tuple[str, ...]) -> None:
@@ -270,20 +367,28 @@ def _reconcile(
             tracked.append(old[event.event_key])
             report.events_kept += 1
             continue
-        if dry_run:
-            logger.info("[dry-run] would create '%s' at %s", event.summary, event.start)
-            report.events_created += 1
-            report.created_lines.append(_describe_event(event))
-            continue
-        existing_id = sink.find_event_id_by_key(event.event_key)
-        if existing_id:
-            logger.info("Event %s already in calendar; adopting it", event.event_key)
-            tracked.append(_track(event, existing_id))
-            report.events_kept += 1
-            continue
-        google_id = sink.create_event(event)
-        tracked.append(_track(event, google_id))
-        report.events_created += 1
-        report.created_lines.append(_describe_event(event))
+        published = _publish(event, sink, report, dry_run)
+        if published is not None:
+            tracked.append(published)
 
     return PostState(content_hash=post.content_hash, last_seen=now.isoformat(), events=tracked)
+
+
+def _publish(
+    event: TradingEvent, sink: EventSink, report: RunReport, dry_run: bool
+) -> TrackedEvent | None:
+    """Create (or adopt) one event in the sink; None on a dry run."""
+    if dry_run:
+        logger.info("[dry-run] would create '%s' at %s", event.summary, event.start)
+        report.events_created += 1
+        report.created_lines.append(_describe_event(event))
+        return None
+    existing_id = sink.find_event_id_by_key(event.event_key)
+    if existing_id:
+        logger.info("Event %s already in calendar; adopting it", event.event_key)
+        report.events_kept += 1
+        return _track(event, existing_id)
+    google_id = sink.create_event(event)
+    report.events_created += 1
+    report.created_lines.append(_describe_event(event))
+    return _track(event, google_id)

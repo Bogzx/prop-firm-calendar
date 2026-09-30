@@ -22,6 +22,11 @@ _EXCERPT_LIMIT = 800
 class Rejection:
     raw: RawEvent
     reason: str
+    #: The event is fine but not yet publishable (beyond `max_days_ahead`).
+    #: The pipeline keeps it and re-validates it on later runs instead of
+    #: forgetting it — an unchanged post is never sent to the LLM again, so a
+    #: dropped far-future event would otherwise never appear at all.
+    retryable: bool = False
 
 
 def _offset_tz(stated: str) -> timezone | None:
@@ -92,7 +97,7 @@ def validate_events(
                 Rejection(raw, f"duration exceeds {rules.max_duration_hours}h sanity cap")
             )
         elif start > now + timedelta(days=rules.max_days_ahead):
-            rejections.append(Rejection(raw, "too far in the future"))
+            rejections.append(Rejection(raw, "too far in the future", retryable=True))
         elif end <= now:
             rejections.append(Rejection(raw, "already ended"))
         elif raw.confidence == "low" and rules.reject_low_confidence:

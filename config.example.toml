@@ -116,7 +116,7 @@ sync_interval_minutes = 360     # sync every 6 hours. /healthz returns 503 once 
 
 [events]
 max_duration_hours = 48         # sanity cap; longer extractions are rejected
-max_days_ahead = 120
+max_days_ahead = 120            # further out is held back and published once in range (no new LLM call)
 reject_low_confidence = false   # true = drop extractions the model flagged as a
                                 # guess, instead of publishing them marked
 low_confidence_marker = "(unconfirmed)"   # appended to a low-confidence title

@@ -1,12 +1,15 @@
 import dataclasses
+import json
 from datetime import UTC, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from ftmo_calendar.config import AppConfig, CalendarConfig, EventRules, LLMConfig, SourceConfig
 from ftmo_calendar.models import SourcePost, TradingEvent
 from ftmo_calendar.parsing.llm import RawEvent
+from ftmo_calendar.parsing.validate import validate_events
 from ftmo_calendar.pipeline import run_pipeline
-from ftmo_calendar.state import PostState, State, TrackedEvent
+from ftmo_calendar.state import PostState, State, TrackedEvent, load_state, save_state
 
 NOW = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
 
@@ -526,3 +529,133 @@ def test_a_new_post_records_its_url(tmp_path: Path) -> None:
         now=NOW,
     )
     assert state.posts[POST.post_key].url == POST.url
+
+
+# -- events beyond max_days_ahead -----------------------------------------
+
+FAR = RawEvent(
+    event_type="holiday_closure",
+    start_time="2026-12-25T00:00:00",
+    end_time="2026-12-25T23:59:00",
+    stated_utc_offset="+03:00",
+)
+LATER = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)  # Dec 25 is now 115 days out
+
+
+def _run(tmp_path: Path, state: State, extractor, now: datetime, posts=None, sink=None, **kw):
+    return run_pipeline(
+        source=FakeSource([POST] if posts is None else posts),
+        extractor=extractor,
+        sink=sink or FakeSink(),
+        state=state,
+        config=make_config(tmp_path),
+        now=now,
+        firm="ftmo",
+        **kw,
+    )
+
+
+def test_a_far_future_event_is_deferred_not_forgotten(tmp_path: Path) -> None:
+    state, sink = State(), FakeSink()
+    report = _run(tmp_path, state, FakeExtractor([RAW, FAR]), NOW, sink=sink)
+    assert len(sink.created) == 1  # only the near event
+    assert report.events_deferred == 1
+    assert report.rejections == 0  # held back, not rejected
+    assert "1 deferred" in report.summary()
+    assert state.posts[POST.post_key].deferred == [FAR.model_dump()]
+
+
+def test_a_deferred_event_is_published_once_in_range_without_an_llm_call(tmp_path: Path) -> None:
+    """Regression: an unchanged post skipped extraction, so Dec 25 never arrived."""
+    state = State()
+    _run(tmp_path, state, FakeExtractor([RAW, FAR]), NOW)
+
+    extractor, sink = FakeExtractor([]), FakeSink()
+    report = _run(tmp_path, state, extractor, LATER, sink=sink)
+    assert extractor.calls == 0
+    assert [e.start.date().isoformat() for e in sink.created] == ["2026-12-25"]
+    assert report.events_created == 1
+    post_state = state.posts[POST.post_key]
+    assert post_state.deferred == []
+    # Same identity it would have had if extracted fresh on LATER.
+    fresh, _ = validate_events(
+        [FAR], POST, EventRules(), ZoneInfo("Etc/GMT-3"), ZoneInfo("Etc/GMT-3"), now=LATER
+    )
+    assert fresh[0].event_key in {e.event_key for e in post_state.events}
+
+    # And it is not published twice.
+    again = FakeSink()
+    _run(tmp_path, state, FakeExtractor([]), LATER, sink=again)
+    assert again.created == []
+
+
+def test_deferred_events_survive_the_post_leaving_the_index_page(tmp_path: Path) -> None:
+    """FTMO lists only recent posts; the announcement may be gone by then."""
+    state = State()
+    _run(tmp_path, state, FakeExtractor([RAW, FAR]), NOW)
+    other = SourcePost("trading-update-2026-08-30", "t", "maintenance soon", POST.url)
+    sink = FakeSink()
+    _run(tmp_path, state, FakeExtractor([]), LATER, posts=[other], sink=sink)
+    assert [e.start.date().isoformat() for e in sink.created] == ["2026-12-25"]
+    assert sink.created[0].source_url == POST.url
+
+
+def test_deferred_events_are_only_promoted_by_their_own_firm(tmp_path: Path) -> None:
+    state = State()
+    _run(tmp_path, state, FakeExtractor([RAW, FAR]), NOW)
+    sink = FakeSink()
+    run_pipeline(
+        source=FakeSource([]),
+        extractor=FakeExtractor([]),
+        sink=sink,
+        state=state,
+        config=make_config(tmp_path),
+        now=LATER,
+        firm="topstep",
+        source_timezone="America/Chicago",
+    )
+    assert sink.created == []
+    assert state.posts[POST.post_key].deferred == [FAR.model_dump()]
+
+
+def test_a_dry_run_does_not_consume_deferred_events(tmp_path: Path) -> None:
+    state = State()
+    _run(tmp_path, state, FakeExtractor([RAW, FAR]), NOW)
+    report = _run(tmp_path, state, FakeExtractor([]), LATER, dry_run=True)
+    assert report.events_created == 1
+    assert state.posts[POST.post_key].deferred == [FAR.model_dump()]
+
+
+def test_a_pre_v5_post_is_re_extracted_exactly_once(tmp_path: Path) -> None:
+    """Old state cannot say what it dropped; one extraction recovers it."""
+    path = tmp_path / "state.json"
+    state = State()
+    _run(tmp_path, state, FakeExtractor([RAW]), NOW)
+    save_state(state, path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    for post in payload["posts"].values():
+        del post["deferred"]  # what a v4 file looks like
+    payload["version"] = 4
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    upgraded = load_state(path)
+    assert upgraded.posts[POST.post_key].deferred is None
+    extractor, sink = FakeExtractor([RAW, FAR]), FakeSink()
+    _run(tmp_path, upgraded, extractor, LATER, sink=sink)
+    assert extractor.calls == 1
+    assert [e.start.date().isoformat() for e in sink.created] == ["2026-12-25"]
+
+    _run(tmp_path, upgraded, extractor, LATER)
+    assert extractor.calls == 1
+
+
+def test_prune_keeps_a_post_that_still_holds_deferred_events() -> None:
+    old = "2026-01-01T00:00:00+00:00"
+    state = State(
+        posts={
+            "held": PostState("h", old, [], deferred=[FAR.model_dump()]),
+            "done": PostState("h", old, []),
+        }
+    )
+    state.prune(now=NOW)
+    assert list(state.posts) == ["held"]

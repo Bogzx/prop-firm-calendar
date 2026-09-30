@@ -143,3 +143,19 @@ def test_confidence_does_not_change_event_identity() -> None:
     high, _ = run([raw()])
     low, _ = run([raw(confidence="low")])
     assert high[0].event_key == low[0].event_key
+
+
+def test_only_a_too_far_event_is_retryable() -> None:
+    """Beyond max_days_ahead is 'not yet'; every other rejection is final."""
+    _, rejections = run(
+        [
+            raw("2026-12-25T00:00:00", "2026-12-25T23:59:00"),
+            raw("2026-05-01T08:00:00", "2026-05-01T09:00:00"),  # already ended
+            raw("2026-06-06T14:00:00", "2026-06-06T08:00:00"),  # end before start
+        ]
+    )
+    assert [(r.reason, r.retryable) for r in rejections] == [
+        ("too far in the future", True),
+        ("already ended", False),
+        ("end is not after start", False),
+    ]
