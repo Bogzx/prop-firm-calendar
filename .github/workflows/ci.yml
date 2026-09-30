@@ -28,9 +28,10 @@ jobs:
         run: pytest -v
 
   docker:
-    # The VPS rebuilds this image from main every five minutes
-    # (scripts/autodeploy.sh), so a Dockerfile that does not build reaches
-    # production before it reaches a human. Build it here first.
+    # The VPS rebuilds this image from main (scripts/autodeploy.sh), and only
+    # once this workflow has passed for the commit (scripts/ci_gate.py keys on
+    # the workflow name "CI"; rename it and the gate never opens). Building
+    # the image here is what keeps a broken Dockerfile out of production.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
