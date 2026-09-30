@@ -263,3 +263,21 @@ def test_feed_url_builder_scopes_its_selectors_per_axis() -> None:
     assert ".filters input[data-type]" in page
     assert ".filters input[data-firm]" in page
     assert 'querySelectorAll(".filters input")' not in page
+
+
+def test_a_window_announced_by_two_posts_is_one_row() -> None:
+    def event(key: str) -> TrackedEvent:
+        return TrackedEvent(key, "g", iso(5), summary="⏳ Early Close — UKOIL.cash", start=iso(2))
+
+    same_start = event("a")
+    twin = TrackedEvent(
+        "b", "g", same_start.end, summary=same_start.summary, start=same_start.start
+    )
+    state = State(
+        posts={
+            "p1": PostState("h", "2026-06-09T00:00:00+00:00", [same_start]),
+            "p2": PostState("h", "2026-06-09T00:00:00+00:00", [twin]),
+        }
+    )
+    page = render_page(state, SNAPSHOT).decode("utf-8")
+    assert page.count("Early Close — UKOIL.cash</td>") == 1

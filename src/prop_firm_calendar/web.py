@@ -87,6 +87,7 @@ def render_page(
 
     upcoming: list[tuple[datetime, str, str, str, str]] = []
     past: list[tuple[datetime, str, str, str, str]] = []
+    shown: set[tuple[str, str, str, str]] = set()  # one row per window; see render_ics
     for post in state.posts.values():
         # `default_firm` attributes state written before per-firm tracking; without
         # it every pre-upgrade event would render with a blank badge.
@@ -95,6 +96,10 @@ def render_page(
         for event in post.events:
             if not event.summary or not event.start:
                 continue
+            identity = (state.firm_of(post, default_firm), event.summary, event.start, event.end)
+            if identity in shown:
+                continue
+            shown.add(identity)
             try:
                 start_dt = datetime.fromisoformat(event.start)
                 end_dt = datetime.fromisoformat(event.end)

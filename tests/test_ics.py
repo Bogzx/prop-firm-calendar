@@ -237,3 +237,15 @@ def test_a_pre_v5_post_without_a_url_falls_back_to_its_firms_page() -> None:
     assert "help.e8markets.com" in links["k-e8"]
     # Unattributed state belongs to the first configured firm (State.firm_of).
     assert "https://ftmo.com/en/trading-updates/" in links["k-legacy"]
+
+
+def test_a_window_announced_by_two_posts_appears_once() -> None:
+    """Live: Labor Day early closes were in FTMO's feed twice, one per post."""
+    first, second = _post("ftmo", "k-first"), _post("ftmo", "k-second")
+    other_symbols = _post("ftmo", "k-other")
+    other_symbols.events[0].summary = "ftmo event — GER40.cash"
+    other_firm = _post("topstep", "k-topstep")
+    other_firm.events[0].summary = "ftmo event"
+    state = State(posts={"a": first, "b": second, "c": other_symbols, "d": other_firm})
+    uids = set(_descriptions(render_ics(state, (), now=NOW)))
+    assert uids == {"k-first", "k-other", "k-topstep"}
