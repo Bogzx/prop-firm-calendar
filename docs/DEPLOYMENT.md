@@ -203,10 +203,39 @@ systemctl cat ftmo-autodeploy.service | grep ExecStart
 docker ps --format '{{.Names}}\t{{.Label "com.docker.compose.project.working_dir"}}'
 ```
 
-Watch deploys with `journalctl -u ftmo-autodeploy.service -f`. Note this
-deploys whatever lands on `main` regardless of CI status — fine for a
-single-maintainer repo; use a GitHub-Actions-over-SSH deploy instead if you
-want CI-gated deploys.
+Watch deploys with `journalctl -u ftmo-autodeploy.service -f`.
+
+**Deploys wait for CI.** A new `origin/main` commit is deployed only once the
+`CI` workflow's newest run for that exact commit has succeeded;
+`scripts/ci_gate.py` asks the GitHub API (no token needed for a public repo).
+The journal then reads one of:
+
+| Journal line | Meaning | Unit result |
+| --- | --- | --- |
+| `waiting for CI on abc1234: 'CI' is in_progress …` | tests still running; retried next tick | success |
+| `CI passed for abc1234 …` then `deployed abc1234` | deployed | success |
+| `not deploying abc1234: 'CI' concluded failure …` | red commit; the old version keeps running | **failed** |
+| `not deploying abc1234: CI status unknown …` | GitHub unreachable or rate-limited | **failed** |
+
+Upgrading needs no change to the unit above: the first deploy of this version
+is still made by the previous, ungated script, and every later one is gated.
+The host needs `python3` (present on stock Ubuntu/Debian) and outbound HTTPS
+to `api.github.com`. The unit sets no environment; to change the defaults add a
+drop-in with `sudo systemctl edit ftmo-autodeploy.service`:
+
+```ini
+[Service]
+# Deploy without waiting for CI (the old behaviour):
+Environment=AUTODEPLOY_REQUIRE_CI=0
+# Only if origin is not a github.com URL:
+Environment=AUTODEPLOY_REPO=Bogzx/prop-firm-calendar
+# Only if you hit the anonymous API limit (60 requests/hour; one check per
+# tick while a new commit waits is 12/hour):
+Environment=GITHUB_TOKEN=github_pat_...
+```
+
+A clone whose `origin` still points at the pre-rename `Bogzx/ftmo-calendar`
+URL works unchanged: GitHub redirects both git and the API.
 
 ## 7. Operating it
 
