@@ -107,6 +107,7 @@ class MultiRunReport:
             total.events_kept += r.events_kept
             total.rejections += r.rejections
             total.events_deferred += r.events_deferred
+            total.duplicates_merged += r.duplicates_merged
             total.rejected_lines.extend(r.rejected_lines)
             total.created_lines.extend(r.created_lines)
             total.deleted_lines.extend(r.deleted_lines)
