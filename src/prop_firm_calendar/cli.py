@@ -343,6 +343,8 @@ def _cmd_serve(config: AppConfig, port_override: int | None) -> int:
         stats=StatsStore(config.base_dir / "stats.json"),
         source_name=", ".join(titles.get(n, n) for n in names) or "FTMO",
         valid_firms=names,
+        firm_titles=titles,
+        firm_urls=urls,
     )
 
 
