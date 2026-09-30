@@ -108,6 +108,7 @@ def run_pipeline(
             # skips extraction below, and a state file written before multi-firm
             # support would otherwise never gain a firm at all.
             post_state.firm = firm or post_state.firm
+            post_state.url = post.url
 
         if not _is_relevant(post, gate):
             logger.info("Post %s has no relevant keywords; skipping", post.post_key)
@@ -138,6 +139,7 @@ def run_pipeline(
             post, events, post_state, sink, report, dry_run, now, config.events
         )
         new_post_state.firm = firm or (post_state.firm if post_state else "")
+        new_post_state.url = post.url
         if not dry_run:
             state.posts[post.post_key] = new_post_state
 

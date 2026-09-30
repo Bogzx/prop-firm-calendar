@@ -10,7 +10,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-STATE_VERSION = 4
+STATE_VERSION = 5
 _PRUNE_AFTER_DAYS = 45
 
 
@@ -36,6 +36,11 @@ class PostState:
     #: *not* part of TradingEvent.event_key — adding it would recompute every
     #: existing key and orphan every event already in subscribers' calendars.
     firm: str = ""
+    #: The post's own URL (v5), so every event in a combined feed links to the
+    #: announcement it came from rather than to one configured firm's page.
+    #: Empty on older entries until the post is next seen; readers fall back to
+    #: the firm's index page.
+    url: str = ""
 
 
 @dataclass
@@ -92,6 +97,7 @@ def load_state(path: Path) -> State:
                 content_hash=p["content_hash"],
                 last_seen=p["last_seen"],
                 firm=p.get("firm", ""),
+                url=p.get("url", ""),
                 events=[
                     TrackedEvent(
                         event_key=e["event_key"],

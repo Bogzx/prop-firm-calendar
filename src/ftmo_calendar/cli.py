@@ -146,6 +146,25 @@ def _firm_titles(config: AppConfig) -> dict[str, str]:
     return titles
 
 
+def _firm_urls(config: AppConfig) -> dict[str, str]:
+    """profile name -> the firm's announcements page, the link of last resort.
+
+    Used for events whose state entry predates per-post URLs. Never
+    `config.source.url`: that is FTMO's page, and with several firms it sent
+    every subscriber to FTMO whatever firm the event came from.
+    """
+    from ftmo_calendar.sources.profile import load_profile
+
+    urls: dict[str, str] = {}
+    for firm in config.firms:
+        try:
+            profile = load_profile(firm.profile)
+        except ConfigError:  # pragma: no cover - load_config already validated
+            continue
+        urls[profile.name] = firm.url or profile.url
+    return urls
+
+
 def _default_firm(config: AppConfig) -> str:
     """Which firm owns state entries written before per-firm tracking.
 
@@ -162,10 +181,10 @@ def _write_feed(config: AppConfig, state: State) -> None:
         state,
         config.resolve(config.ics.path),
         config.calendar.reminders_minutes,
-        source_url=config.source.url,
         refresh_minutes=config.serve.sync_interval_minutes,
         default_firm=_default_firm(config),
         firm_titles=_firm_titles(config),
+        firm_urls=_firm_urls(config),
         tz_name=config.calendar.timezone,
     )
 
@@ -274,6 +293,7 @@ def _cmd_serve(config: AppConfig, port_override: int | None) -> int:
         return _run_sync(config, dry_run=False)
 
     titles = _firm_titles(config)
+    urls = _firm_urls(config)
     default_firm = _default_firm(config)
 
     def feed_renderer(selection: FeedSelection) -> bytes:
@@ -283,12 +303,12 @@ def _cmd_serve(config: AppConfig, port_override: int | None) -> int:
         return render_ics(
             load_state(config.state_path),
             config.calendar.reminders_minutes,
-            source_url=config.source.url,
             refresh_minutes=config.serve.sync_interval_minutes,
             types=selection.types,
             firms=selection.firms,
             default_firm=default_firm,
             firm_titles=titles,
+            firm_urls=urls,
             tz_name=config.calendar.timezone,
         ).encode("utf-8")
 

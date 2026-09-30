@@ -20,6 +20,7 @@ def test_roundtrip(tmp_path: Path) -> None:
             "p1": PostState(
                 content_hash="abc",
                 last_seen="2026-06-09T00:00:00+00:00",
+                url="https://example.com/post",
                 events=[
                     TrackedEvent(
                         "k1",
@@ -36,6 +37,7 @@ def test_roundtrip(tmp_path: Path) -> None:
     save_state(state, path)
     loaded = load_state(path)
     assert loaded.posts["p1"].content_hash == "abc"
+    assert loaded.posts["p1"].url == "https://example.com/post"
     assert loaded.posts["p1"].events[0].google_event_id == "gid1"
     assert loaded.posts["p1"].events[0].summary == "⚠️ Maintenance"
     assert loaded.posts["p1"].events[0].start == "2026-06-09T22:00:00+00:00"
