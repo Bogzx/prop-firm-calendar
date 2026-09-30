@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -16,6 +17,29 @@ logger = logging.getLogger(__name__)
 
 _OFFSET = re.compile(r"^(?:UTC|GMT)?([+-])(\d{1,2}):?(\d{2})?$")
 _EXCERPT_LIMIT = 800
+_WORD = re.compile(r"\w+")
+_EVIDENCE_LIMIT = 300
+#: Fewer words than this is not evidence of anything ("11:45 CT", "Nov 26").
+_EVIDENCE_MIN_WORDS = 4
+
+
+def _words(text: str) -> list[str]:
+    return [w.casefold() for w in _WORD.findall(unicodedata.normalize("NFKC", text))]
+
+
+def evidence_supported(quote: str, text: str) -> bool:
+    """Does `quote` occur in `text`, word for word?
+
+    Compared as word sequences, not raw strings: the scraped text joins table
+    cells and elements with single spaces, and a model quoting a table row
+    naturally adds pipes, colons or line breaks between the same words. What
+    must survive is every word, in order, contiguously — a paraphrase or an
+    invented sentence does not.
+    """
+    wanted = _words(quote)
+    if len(wanted) < _EVIDENCE_MIN_WORDS:
+        return False
+    return f" {' '.join(wanted)} " in f" {' '.join(_words(text))} "
 
 
 @dataclass(frozen=True)
@@ -107,9 +131,23 @@ def validate_events(
             rejections.append(Rejection(raw, "already ended", benign=True))
         elif raw.confidence == "low" and rules.reject_low_confidence:
             rejections.append(Rejection(raw, "low extraction confidence", benign=True))
+        elif (problem := _evidence_problem(raw, post)) and rules.require_evidence:
+            rejections.append(Rejection(raw, problem))
         else:
             event_type = EventType(raw.event_type)
-            low = raw.confidence == "low"
+            evidence = _clean_evidence(raw.evidence) if not problem else ""
+            # A quote the announcement does not contain is the model's own
+            # words presented as the firm's: publish flagged, never as certain.
+            fabricated = bool(raw.evidence) and problem is not None
+            if fabricated:
+                logger.warning(
+                    "Evidence for %s %s on %s is not in the announcement; publishing as "
+                    "low confidence",
+                    raw.event_type,
+                    raw.start_time,
+                    post.post_key,
+                )
+            low = raw.confidence == "low" or fabricated
             if low:
                 logger.info(
                     "Low-confidence extraction for %s (%s %s); publishing flagged",
@@ -121,12 +159,13 @@ def validate_events(
                 TradingEvent(
                     event_type=event_type,
                     summary=_build_summary(event_type, raw.affected, rules, low=low),
-                    description=_describe(post, low=low),
+                    description=_describe(post, low=low, evidence=evidence),
                     start=start.astimezone(calendar_tz),
                     end=end.astimezone(calendar_tz),
                     source_post_key=post.post_key,
                     source_url=post.url,
-                    confidence=raw.confidence,
+                    confidence="low" if low else raw.confidence,
+                    evidence=evidence,
                 )
             )
     return events, rejections
@@ -138,9 +177,30 @@ _LOW_CONFIDENCE_NOTE = (
 )
 
 
-def _describe(post: SourcePost, *, low: bool) -> str:
+def _describe(post: SourcePost, *, low: bool, evidence: str = "") -> str:
     description = build_description(post)
+    if evidence:
+        description = f"Announcement: \u201c{evidence}\u201d\n\n{description}"
     return f"{_LOW_CONFIDENCE_NOTE}\n\n{description}" if low else description
+
+
+def _evidence_problem(raw: RawEvent, post: SourcePost) -> str | None:
+    """Why this event's evidence cannot be trusted, or None when it can.
+
+    A post re-validated after it left the index page (deferred events) has no
+    text to check against; its quote was taken from the real text when it was
+    extracted, so it is accepted as is.
+    """
+    if not raw.evidence or not raw.evidence.strip():
+        return "no evidence quoted from the announcement"
+    if post.text and not evidence_supported(raw.evidence, post.text):
+        return "quoted evidence does not appear in the announcement"
+    return None
+
+
+def _clean_evidence(quote: str | None) -> str:
+    text = " ".join("".join(ch if ch.isprintable() else " " for ch in quote or "").split())
+    return text[:_EVIDENCE_LIMIT].rstrip() + ("…" if len(text) > _EVIDENCE_LIMIT else "")
 
 
 _AFFECTED_LIMIT = 70

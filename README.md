@@ -100,6 +100,10 @@ flowchart LR
 - **Deterministic.** Temperature-0 extraction with a strict JSON schema, a repair
   retry, model fallback, and sanity validation (end after start, duration caps,
   plausible date window, timezone taken from the announcement's stated offset).
+- **Shows its evidence.** Each event carries the announcement's own words for it,
+  checked word-for-word against the scraped text and shown in the event
+  description and the JSON API. A quote the page does not contain marks the event
+  *(unconfirmed)*; `[events] require_evidence = true` rejects it instead.
 - **Fails loudly — including when nothing raised.** A broken scraper or expired
   token exits non-zero with clear instructions. So do the quiet failures, which
   are the dangerous ones: if the keyword gate stops matching any post (FTMO

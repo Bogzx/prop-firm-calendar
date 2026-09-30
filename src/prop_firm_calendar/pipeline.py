@@ -411,6 +411,7 @@ def _track(event: TradingEvent, backend_id: str) -> TrackedEvent:
         summary=event.summary,
         start=event.start.isoformat(),
         event_type=event.event_type.value,
+        evidence=event.evidence,
     )
 
 

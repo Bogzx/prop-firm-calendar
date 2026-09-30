@@ -868,3 +868,12 @@ def test_a_dry_run_merges_nothing(tmp_path: Path) -> None:
     extractor = PerPostExtractor({POST.text: [RAW], FOLLOW_UP.text: [RAW]})
     _run(tmp_path, state, extractor, NOW, posts=[POST, FOLLOW_UP], sink=sink, dry_run=True)
     assert sink.deleted == []
+
+
+def test_the_tracked_event_keeps_its_evidence_through_a_save(tmp_path: Path) -> None:
+    quoted = RAW.model_copy(update={"evidence": "ctrader maintenance on Saturday 6 Jun 2026"})
+    state = State()
+    _run(tmp_path, state, FakeExtractor([quoted]), NOW)
+    save_state(state, tmp_path / "state.json")
+    [tracked] = load_state(tmp_path / "state.json").posts[POST.post_key].events
+    assert tracked.evidence == "ctrader maintenance on Saturday 6 Jun 2026"

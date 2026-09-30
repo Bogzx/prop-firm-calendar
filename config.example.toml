@@ -129,6 +129,9 @@ delete_on_empty_extraction = false        # true restores pre-audit behaviour: a
                                 # withdrawn announcement, and only one of the
                                 # two is recoverable. (A reschedule that
                                 # announces new times reconciles normally.)
+require_evidence = false        # true = reject events whose quoted evidence is
+                                # missing or not found in the announcement,
+                                # instead of publishing them marked unconfirmed
 
 [events.summaries]
 # Titles per event type. Defaults shown; override any subset.

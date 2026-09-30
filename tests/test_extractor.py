@@ -160,3 +160,17 @@ def test_consensus_runs_one_is_single_call() -> None:
 def test_consensus_all_empty_is_empty() -> None:
     backend = ScriptedBackend(["[]", "[]", "[]"])
     assert EventExtractor(backend, ["m1"], consensus_runs=3).extract("text") == []
+
+
+def test_the_prompt_asks_for_verbatim_evidence() -> None:
+    backend = ScriptedBackend(["[]"])
+    EventExtractor(backend, ["m1"]).extract("text")
+    prompt = backend.calls[0][0]
+    assert '"evidence"' in prompt and "copied EXACTLY" in prompt
+
+
+def test_evidence_is_parsed_and_survives_consensus() -> None:
+    quoted = A.replace('"confidence"', '"evidence": "Saturday 6 June 08:00", "confidence"')
+    backend = ScriptedBackend([f"[{A}]", f"[{quoted}]", f"[{A}]"])
+    [event] = EventExtractor(backend, ["m1"], consensus_runs=3).extract("text")
+    assert event.evidence == "Saturday 6 June 08:00"

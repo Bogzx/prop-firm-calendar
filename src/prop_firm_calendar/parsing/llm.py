@@ -29,6 +29,11 @@ class RawEvent(BaseModel):
     stated_utc_offset: str | None = None
     affected: str | None = None  # symbols/platforms, e.g. "UK100.cash, HK50.cash" or "cTrader"
     confidence: Literal["high", "low"] = "high"
+    #: Verbatim quote from the announcement that states this event's date and
+    #: time. Checked against the scraped text before it is trusted (see
+    #: validate.evidence_supported); a quote that is not there is a strong sign
+    #: the event is not there either.
+    evidence: str | None = None
 
 
 _EVENTS = TypeAdapter(list[RawEvent])
@@ -49,6 +54,8 @@ def _merge_variant(kept: RawEvent, candidate: RawEvent) -> RawEvent:
         updates["stated_utc_offset"] = candidate.stated_utc_offset
     if len(candidate.affected or "") > len(kept.affected or ""):
         updates["affected"] = candidate.affected
+    if not kept.evidence and candidate.evidence:
+        updates["evidence"] = candidate.evidence
     return kept.model_copy(update=updates) if updates else kept
 
 
@@ -60,7 +67,8 @@ PROMPT_TEMPLATE = """You extract scheduled trading interruptions from a prop-fir
 
 Output ONLY a JSON array, no prose and no markdown fences. Each element:
 {{"event_type": "...", "start_time": "YYYY-MM-DDTHH:MM:SS", "end_time": "YYYY-MM-DDTHH:MM:SS", \
-"stated_utc_offset": "+03:00" or null, "affected": "..." or null, "confidence": "high"|"low"}}
+"stated_utc_offset": "+03:00" or null, "affected": "..." or null, "confidence": "high"|"low", \
+"evidence": "..."}}
 
 Event types — classify every scheduled interruption as exactly one of:
 - "maintenance": trading platform downtime (MT4, MT5, cTrader, DXtrade). One event per \
@@ -91,6 +99,10 @@ news, permanent session-time changes ("effective from..."), spread or swap updat
 - If there are no scheduled events, output [].
 - Set "confidence" to "low" when you had to infer a date or time that the text \
 does not state outright; "high" only when the announcement says it plainly.
+- "evidence": the shortest passage of the announcement, copied EXACTLY (same words, \
+same order, no paraphrase, at most ~200 characters), that states this event's date \
+and time — e.g. the table row or sentence. It is checked word-for-word against the \
+text, so do not fix typos or reformat it.
 {hints}
 Announcement text:
 ---
