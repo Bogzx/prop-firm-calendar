@@ -331,3 +331,26 @@ def test_healthz_turns_503_when_one_firm_is_down(server) -> None:
     assert code == 503
     payload = json.loads(body)
     assert payload["unhealthy_sources"] == ["Topstep"]
+
+
+def test_healthz_shows_each_firms_calendar_and_its_rejections() -> None:
+    """The anomaly clears on the next run; what was dropped stays visible."""
+    status = status_at()
+    e8 = FirmOutcome(
+        name="e8-markets",
+        display_name="E8 Markets",
+        ok=True,
+        events_upcoming=0,
+        events_deferred=1,
+        rejected=("e8-schedule: early_close 2026-06-12T20:00:00: no UTC offset stated",),
+    )
+    status.record_success(now=NOW, firms=[ok("ftmo", "FTMO"), e8])
+    [ftmo_src, e8_src] = status.snapshot(now=NOW)["sources"]
+    assert e8_src["events_upcoming"] == 0
+    assert e8_src["events_deferred"] == 1
+    assert e8_src["rejected_extractions"] == list(e8.rejected)
+    assert e8_src["ok"] is True  # informational once its run's anomaly has passed
+    assert ftmo_src["rejected_extractions"] == []
+
+    page = render_page(State(), status.snapshot(now=NOW)).decode("utf-8")
+    assert "1 extracted event(s) not published" in page

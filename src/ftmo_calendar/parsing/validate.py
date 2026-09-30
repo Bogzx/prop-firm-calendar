@@ -27,6 +27,11 @@ class Rejection:
     #: forgetting it — an unchanged post is never sent to the LLM again, so a
     #: dropped far-future event would otherwise never appear at all.
     retryable: bool = False
+    #: Expected in normal operation and not worth a human's attention: a window
+    #: that has already passed, or a guess dropped because the operator asked
+    #: for `reject_low_confidence`. Every other rejection means the
+    #: announcement holds an event the calendar will not show.
+    benign: bool = False
 
 
 def _offset_tz(stated: str) -> timezone | None:
@@ -99,9 +104,9 @@ def validate_events(
         elif start > now + timedelta(days=rules.max_days_ahead):
             rejections.append(Rejection(raw, "too far in the future", retryable=True))
         elif end <= now:
-            rejections.append(Rejection(raw, "already ended"))
+            rejections.append(Rejection(raw, "already ended", benign=True))
         elif raw.confidence == "low" and rules.reject_low_confidence:
-            rejections.append(Rejection(raw, "low extraction confidence"))
+            rejections.append(Rejection(raw, "low extraction confidence", benign=True))
         else:
             event_type = EventType(raw.event_type)
             low = raw.confidence == "low"

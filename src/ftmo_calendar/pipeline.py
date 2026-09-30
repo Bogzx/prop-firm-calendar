@@ -45,6 +45,8 @@ class RunReport:
     #: Extractions held back for being beyond max_days_ahead; see
     #: PostState.deferred.
     events_deferred: int = 0
+    #: One line per rejection that dropped a real event (not benign ones).
+    rejected_lines: list[str] = field(default_factory=list)
     dry_run: bool = False
     created_lines: list[str] = field(default_factory=list)
     deleted_lines: list[str] = field(default_factory=list)
@@ -148,7 +150,7 @@ def run_pipeline(
             require_stated_offset=require_stated_offset,
         )
         deferred = [r.raw for r in rejections if r.retryable]
-        _count_rejections(post, rejections, report)
+        rejected = _count_rejections(post, rejections, report)
 
         new_post_state = _reconcile(
             post, events, post_state, sink, report, dry_run, now, config.events
@@ -156,6 +158,7 @@ def run_pipeline(
         new_post_state.firm = firm or (post_state.firm if post_state else "")
         new_post_state.url = post.url
         new_post_state.deferred = [raw.model_dump() for raw in deferred]
+        new_post_state.rejected = rejected
         if not dry_run:
             state.posts[post.post_key] = new_post_state
         extracted.add(post.post_key)
@@ -185,20 +188,45 @@ def run_pipeline(
     return report
 
 
-def _count_rejections(post: SourcePost, rejections: list[Rejection], report: RunReport) -> None:
+def _count_rejections(
+    post: SourcePost, rejections: list[Rejection], report: RunReport
+) -> list[str]:
+    """Tally rejections; returns (and raises an anomaly for) the ones that matter.
+
+    A rejection used to be a log line and a number in the summary. But one
+    that is not benign means the announcement holds an event the calendar
+    will not show — E8 rows without a stated offset, a duration over the cap,
+    a garbled time — and the only place that said so was a log nobody reads
+    while /healthz stayed green.
+    """
+    flagged: list[str] = []
     for rejection in rejections:
+        raw = rejection.raw
         if rejection.retryable:
             report.events_deferred += 1
             logger.info(
                 "Deferred %s %s from %s: %s; will re-check each run",
-                rejection.raw.event_type,
-                rejection.raw.start_time,
+                raw.event_type,
+                raw.start_time,
                 post.post_key,
                 rejection.reason,
             )
-        else:
-            report.rejections += 1
-            logger.warning("Rejected extraction for %s: %s", post.post_key, rejection.reason)
+            continue
+        report.rejections += 1
+        logger.warning("Rejected extraction for %s: %s", post.post_key, rejection.reason)
+        if not rejection.benign:
+            what = f" ({raw.affected})" if raw.affected else ""
+            flagged.append(f"{raw.event_type} {raw.start_time}{what}: {rejection.reason}")
+    if flagged:
+        where = f"{report.label}: " if report.firm else ""
+        message = (
+            f"{where}post {post.post_key}: {len(flagged)} extracted event(s) rejected and "
+            f"not published — {'; '.join(flagged)}"
+        )
+        logger.error("%s", message)
+        report.anomalies.append(message)
+        report.rejected_lines.extend(f"{post.post_key}: {line}" for line in flagged)
+    return flagged
 
 
 def _promote_deferred(
@@ -232,7 +260,7 @@ def _promote_deferred(
     still_deferred = [r.raw for r in rejections if r.retryable]
     # Only what changed state counts: a still-deferred event was already
     # counted on the run that extracted it.
-    _count_rejections(post, [r for r in rejections if not r.retryable], report)
+    newly_rejected = _count_rejections(post, [r for r in rejections if not r.retryable], report)
     known = {e.event_key for e in post_state.events}
     promoted: list[TrackedEvent] = []
     for event in events:
@@ -245,6 +273,7 @@ def _promote_deferred(
     if not dry_run:
         post_state.events.extend(promoted)
         post_state.deferred = [raw.model_dump() for raw in still_deferred]
+        post_state.rejected += newly_rejected
 
 
 def _detect_anomalies(report: RunReport, keywords: tuple[str, ...]) -> None:

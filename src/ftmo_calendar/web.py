@@ -175,7 +175,16 @@ def render_page(
                 when = f"{_humanize(float(age))} ago"
             else:
                 when = "unknown"
-            detail = entry.get("last_error") or "; ".join(entry.get("anomalies") or [])
+            rejected = entry.get("rejected_extractions") or []
+            detail = (
+                entry.get("last_error")
+                or "; ".join(entry.get("anomalies") or [])
+                or (
+                    f"{len(rejected)} extracted event(s) not published: {rejected[0]}"
+                    if rejected
+                    else ""
+                )
+            )
             detail_html = (
                 f'<span class="srcnote">{html.escape(str(detail)[:200])}</span>' if detail else ""
             )

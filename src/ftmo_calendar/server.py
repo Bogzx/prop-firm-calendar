@@ -65,6 +65,10 @@ class FirmStatus:
     anomalies: tuple[str, ...] = ()
     runs_ok: int = 0
     runs_failed: int = 0
+    #: From the last completed run (firms.FirmOutcome); None until one lands.
+    events_upcoming: int | None = None
+    events_deferred: int = 0
+    rejected: tuple[str, ...] = ()
 
     def snapshot(self, now: datetime, stale_after: float, fallback: str | None) -> dict:
         since = _age(now, self.last_success or fallback)
@@ -89,6 +93,9 @@ class FirmStatus:
             "anomalies": list(self.anomalies),
             "runs_ok": self.runs_ok,
             "runs_failed": self.runs_failed,
+            "events_upcoming": self.events_upcoming,
+            "events_deferred": self.events_deferred,
+            "rejected_extractions": list(self.rejected),
         }
 
 
@@ -155,6 +162,10 @@ class ServerStatus:
             # renewed; otherwise a failing firm rides on the loop's success.
             entry.last_success = stamp
             entry.runs_ok += 1
+            upcoming = getattr(outcome, "events_upcoming", None)
+            entry.events_upcoming = upcoming if isinstance(upcoming, int) else None
+            entry.events_deferred = int(getattr(outcome, "events_deferred", 0) or 0)
+            entry.rejected = tuple(getattr(outcome, "rejected", ()) or ())
 
     def record_failure(self, error: BaseException, now: datetime | None = None) -> None:
         with self._lock:

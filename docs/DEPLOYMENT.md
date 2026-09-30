@@ -220,8 +220,12 @@ want CI-gated deploys.
 `/healthz` answers "is this feed trustworthy right now?", not "is the process
 up". It returns **503** when the last sync raised, when no successful sync has
 landed within twice `sync_interval_minutes`, or when a run completed but
-reported an anomaly (the keyword gate matching nothing, or a post's extraction
-losing events with none new extracted). A plain HTTP monitor on that URL is
+reported an anomaly (the keyword gate matching nothing, a post's extraction
+losing events with none new extracted, or validation rejecting an event the
+announcement contains). An anomaly lasts for the run that raised it; each
+entry in `sources` keeps `rejected_extractions` listed until the post changes,
+next to `events_upcoming` and `events_deferred`, so a firm that is green with
+0 upcoming events can be told apart from one whose rows were all rejected. A plain HTTP monitor on that URL is
 enough — no keyword matching needed. The JSON body carries the detail:
 
 ```json

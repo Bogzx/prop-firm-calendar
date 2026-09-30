@@ -47,6 +47,10 @@ class PostState:
     #: loaded from a pre-v5 file, which cannot say whether anything was
     #: dropped; the pipeline re-extracts such a post once.
     deferred: list[dict] | None = field(default_factory=list)
+    #: Why this post's last extraction dropped events it contained (v5), one
+    #: line per event. Kept until the post changes so /healthz can show it
+    #: after the run that raised the anomaly.
+    rejected: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -105,6 +109,7 @@ def load_state(path: Path) -> State:
                 firm=p.get("firm", ""),
                 url=p.get("url", ""),
                 deferred=p["deferred"] if isinstance(p.get("deferred"), list) else None,
+                rejected=[str(r) for r in p.get("rejected") or []],
                 events=[
                     TrackedEvent(
                         event_key=e["event_key"],
