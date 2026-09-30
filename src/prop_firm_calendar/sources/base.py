@@ -28,6 +28,7 @@ __all__ = [
     "USER_AGENT",
     "FetchError",
     "HttpFetcher",
+    "PageGone",
     "RobotsDisallowed",
     "ScrapeError",
     "parse_title_date",
@@ -66,6 +67,15 @@ class FetchError(Exception):
 
 class ScrapeError(Exception):
     """Page fetched but the expected structure was missing."""
+
+
+class PageGone(ScrapeError):
+    """404/410: the page is not there. Final, never retried.
+
+    A ScrapeError, so an old post linked from the index that has since been
+    deleted is skipped like any other unreadable post — while the index page
+    itself going missing still fails the firm loudly.
+    """
 
 
 def parse_title_date(text: str) -> date | None:
@@ -129,17 +139,25 @@ class HttpFetcher:
             self._limiter.wait(url, self._robots.crawl_delay(url) if self.obey_robots else None)
             try:
                 response = self._session.get(url, timeout=self.timeout)
-                if response.status_code == 429 or response.status_code >= 500:
-                    raise FetchError(f"HTTP {response.status_code} from {url}")
-                response.raise_for_status()
-                return response.text
-            except (requests.RequestException, FetchError) as e:
+            except requests.RequestException as e:  # network: worth another try
                 last = e
-                logger.warning(
-                    "Fetch attempt %d/%d failed for %s: %s", attempt, self.retries, url, e
-                )
-                if attempt < self.retries:
-                    time.sleep(2**attempt)
+            else:
+                code = response.status_code
+                if code == 429 or code >= 500:
+                    last = FetchError(f"HTTP {code} from {url}")
+                elif code in (404, 410):
+                    raise PageGone(f"HTTP {code} from {url}: the page does not exist")
+                elif code >= 400:
+                    # Any other client error is an answer, not a blip:
+                    # asking again only repeats the request the site refused.
+                    raise FetchError(f"HTTP {code} from {url}")
+                else:
+                    return response.text
+            logger.warning(
+                "Fetch attempt %d/%d failed for %s: %s", attempt, self.retries, url, last
+            )
+            if attempt < self.retries:
+                time.sleep(2**attempt)
         raise FetchError(f"could not fetch {url} after {self.retries} attempts: {last}")
 
 
