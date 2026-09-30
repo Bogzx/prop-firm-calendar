@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from ftmo_calendar.server import FeedSelection, ServerStatus, make_handler, run_sync_loop
-from ftmo_calendar.sinks.ics import write_ics
-from ftmo_calendar.state import PostState, State, TrackedEvent, save_state
+from prop_firm_calendar.server import FeedSelection, ServerStatus, make_handler, run_sync_loop
+from prop_firm_calendar.sinks.ics import write_ics
+from prop_firm_calendar.state import PostState, State, TrackedEvent, save_state
 
 NOW = datetime(2026, 6, 9, 12, 0, tzinfo=UTC)
 
@@ -58,8 +58,8 @@ def server(tmp_path: Path):
     renders: list[frozenset[str] | None] = []
 
     def feed_renderer(selection: FeedSelection) -> bytes:
-        from ftmo_calendar.sinks.ics import render_ics
-        from ftmo_calendar.state import load_state
+        from prop_firm_calendar.sinks.ics import render_ics
+        from prop_firm_calendar.state import load_state
 
         renders.append(selection.types)
         return render_ics(
@@ -70,7 +70,7 @@ def server(tmp_path: Path):
             now=NOW,
         ).encode("utf-8")
 
-    from ftmo_calendar.stats import StatsStore
+    from prop_firm_calendar.stats import StatsStore
 
     handler = make_handler(
         ics_path=ics_path,
@@ -85,14 +85,16 @@ def server(tmp_path: Path):
     base = f"http://127.0.0.1:{httpd.server_address[1]}"
     yield base, status, ics_path, renders
     httpd.shutdown()
+    httpd.server_close()
 
 
 def get(url: str):
     try:
-        response = urllib.request.urlopen(url, timeout=5)
-        return response.status, response.headers.get("Content-Type", ""), response.read()
+        with urllib.request.urlopen(url, timeout=5) as response:
+            return response.status, response.headers.get("Content-Type", ""), response.read()
     except urllib.error.HTTPError as e:
-        return e.code, e.headers.get("Content-Type", ""), e.read()
+        with e:
+            return e.code, e.headers.get("Content-Type", ""), e.read()
 
 
 def test_healthz(server) -> None:
@@ -284,28 +286,31 @@ def test_unknown_path_404(server) -> None:
 
 
 def test_security_headers_present(server) -> None:
-    response = urllib.request.urlopen(f"{server[0]}/", timeout=5)
-    assert response.headers["X-Content-Type-Options"] == "nosniff"
-    assert response.headers["X-Frame-Options"] == "DENY"
-    assert "Python" not in (response.headers.get("Server") or "")
+    with urllib.request.urlopen(f"{server[0]}/", timeout=5) as response:
+        headers = response.headers
+    assert headers["X-Content-Type-Options"] == "nosniff"
+    assert headers["X-Frame-Options"] == "DENY"
+    assert "Python" not in (headers.get("Server") or "")
 
 
 def test_page_sets_visitor_cookie_once(server) -> None:
     base, _, _, _ = server
-    response = urllib.request.urlopen(f"{base}/", timeout=5)
-    set_cookie = response.headers.get("Set-Cookie", "")
+    with urllib.request.urlopen(f"{base}/", timeout=5) as response:
+        set_cookie = response.headers.get("Set-Cookie", "")
     assert "aftc_id=" in set_cookie and "HttpOnly" in set_cookie
     cookie_value = set_cookie.split(";", 1)[0]
     request = urllib.request.Request(f"{base}/", headers={"Cookie": cookie_value})
-    second = urllib.request.urlopen(request, timeout=5)
-    assert second.headers.get("Set-Cookie") is None  # known visitor: no new cookie
+    with urllib.request.urlopen(request, timeout=5) as second:
+        assert second.headers.get("Set-Cookie") is None  # known visitor: no new cookie
 
 
 def test_stats_endpoint_counts_visits_and_feed_pulls(server) -> None:
     base, _, _, _ = server
-    cookie = urllib.request.urlopen(f"{base}/", timeout=5).headers["Set-Cookie"].split(";")[0]
+    with urllib.request.urlopen(f"{base}/", timeout=5) as first:
+        cookie = first.headers["Set-Cookie"].split(";")[0]
     request = urllib.request.Request(f"{base}/", headers={"Cookie": cookie})
-    urllib.request.urlopen(request, timeout=5)  # same visitor again
+    with urllib.request.urlopen(request, timeout=5):  # same visitor again
+        pass
     get(f"{base}/feed.ics")
     payload = json.loads(get(f"{base}/stats")[2])
     assert payload["today"]["views"] >= 2
@@ -403,7 +408,7 @@ def test_sync_loop_accepts_a_sync_that_returns_nothing() -> None:
 def test_check_writable_rejects_an_unusable_data_dir(tmp_path: Path) -> None:
     """The Docker volume ownership trap: uid 1000 against a bind mount it does
     not own persists nothing while every healthcheck passes."""
-    from ftmo_calendar.server import DataDirError, check_writable
+    from prop_firm_calendar.server import DataDirError, check_writable
 
     blocker = tmp_path / "data"
     blocker.write_text("I am a file, not a directory", encoding="utf-8")
@@ -412,7 +417,7 @@ def test_check_writable_rejects_an_unusable_data_dir(tmp_path: Path) -> None:
 
 
 def test_check_writable_creates_a_missing_dir(tmp_path: Path) -> None:
-    from ftmo_calendar.server import check_writable
+    from prop_firm_calendar.server import check_writable
 
     target = tmp_path / "fresh"
     check_writable(target)

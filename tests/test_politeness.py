@@ -7,10 +7,12 @@ complaining — so these rules are a condition of the expansion, not decoration.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from ftmo_calendar.sources.base import HttpFetcher, shared_rate_limiter, shared_robots_policy
-from ftmo_calendar.sources.politeness import (
+from prop_firm_calendar.sources.base import HttpFetcher, shared_rate_limiter, shared_robots_policy
+from prop_firm_calendar.sources.politeness import (
     MAX_HONOURED_CRAWL_DELAY,
     PROJECT_UA_TOKEN,
     USER_AGENT,
@@ -185,3 +187,75 @@ def test_stagger_can_be_switched_off() -> None:
     slept: list[float] = []
     assert stagger(0, sleep=slept.append) == 0.0
     assert slept == []
+
+
+class _Response:
+    def __init__(self, code: int, text: str = "ok") -> None:
+        self.status_code = code
+        self.text = text
+
+
+def _fetcher_answering(codes: list[int], monkeypatch: pytest.MonkeyPatch):
+    import prop_firm_calendar.sources.base as base
+
+    monkeypatch.setattr(base.time, "sleep", lambda seconds: None)
+    fetcher = HttpFetcher(obey_robots=False, limiter=RateLimiter(min_interval=0), retries=3)
+    calls: list[int] = []
+
+    def get(url: str, timeout: int):
+        calls.append(codes[len(calls)])
+        return _Response(calls[-1])
+
+    monkeypatch.setattr(fetcher._session, "get", get)
+    return fetcher, calls
+
+
+def test_a_404_is_final_and_is_a_scrape_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Retrying a missing page three times only repeats a refused request."""
+    from prop_firm_calendar.sources.base import PageGone, ScrapeError
+
+    fetcher, calls = _fetcher_answering([404, 200, 200], monkeypatch)
+    with pytest.raises(PageGone) as excinfo:
+        fetcher.get("https://x.test/gone")
+    assert isinstance(excinfo.value, ScrapeError)
+    assert calls == [404]
+
+
+def test_other_client_errors_are_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    from prop_firm_calendar.sources.base import FetchError, PageGone
+
+    fetcher, calls = _fetcher_answering([403, 200], monkeypatch)
+    with pytest.raises(FetchError) as excinfo:
+        fetcher.get("https://x.test/forbidden")
+    assert not isinstance(excinfo.value, PageGone)
+    assert calls == [403]
+
+
+def test_rate_limits_and_server_errors_are_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    fetcher, calls = _fetcher_answering([429, 503, 200], monkeypatch)
+    assert fetcher.get("https://x.test/busy") == "ok"
+    assert calls == [429, 503, 200]
+
+
+def test_a_deleted_linked_post_is_skipped_not_fatal() -> None:
+    from prop_firm_calendar.sources.base import PageGone
+    from prop_firm_calendar.sources.ftmo import FtmoSource
+
+    listing = (Path(__file__).parent / "fixtures" / "ftmo" / "listing.html").read_text(
+        encoding="utf-8"
+    )
+
+    requested: list[str] = []
+
+    class Fetcher:
+        def get(self, url: str) -> str:
+            requested.append(url)
+            if url == "https://ftmo.com/en/trading-updates/":
+                return listing
+            raise PageGone(f"HTTP 404 from {url}")
+
+    source = FtmoSource(max_age_days=100_000)  # every linked post is in range
+    source._fetcher = Fetcher()  # type: ignore[assignment]
+    posts = source.fetch()
+    assert len(requested) > 1, "the linked posts must actually have been tried"
+    assert len(posts) == 1  # the embedded post survives the dead links

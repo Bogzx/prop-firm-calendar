@@ -6,8 +6,8 @@ body:
     id: version
     attributes:
       label: Version
-      description: Output of `ftmo-calendar --version`
-      placeholder: ftmo-calendar 0.4.0
+      description: Output of `prop-firm-calendar --version`
+      placeholder: prop-firm-calendar 0.9.0
     validations:
       required: true
   - type: dropdown

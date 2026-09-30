@@ -3,14 +3,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "ftmo-calendar"
-version = "0.8.1"
-description = "Sync FTMO trading updates (maintenance windows, market closures) to Google Calendar"
+name = "prop-firm-calendar"
+version = "0.9.0"
+description = "Prop-firm maintenance windows and market closures (FTMO, Topstep, Blueberry Funded, E8 Markets) as an ICS feed or Google Calendar"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [{ name = "Bogdan-Alexandru Truta" }]
-keywords = ["ftmo", "trading", "google-calendar", "maintenance"]
+keywords = ["prop-firm", "ftmo", "topstep", "trading", "ics", "google-calendar", "maintenance"]
 dependencies = [
   "requests>=2.31",
   "beautifulsoup4>=4.12",
@@ -28,7 +28,10 @@ dependencies = [
 Repository = "https://github.com/Bogzx/prop-firm-calendar"
 
 [project.scripts]
-ftmo-calendar = "ftmo_calendar.cli:entry"
+prop-firm-calendar = "prop_firm_calendar.cli:entry"
+# The pre-0.9 name. The Docker image, cron lines and systemd units in the wild
+# call it; it stays for as long as they might.
+ftmo-calendar = "prop_firm_calendar.cli:entry"
 
 [project.optional-dependencies]
 # ruff and mypy are pinned exactly, to the versions in requirements.lock: both
@@ -39,10 +42,12 @@ ftmo-calendar = "ftmo_calendar.cli:entry"
 dev = ["pytest>=8", "ruff==0.15.16", "mypy==2.1.0", "types-requests"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/ftmo_calendar"]
+# ftmo_calendar is the deprecated import name: an alias package that resolves
+# every `ftmo_calendar.x` to the `prop_firm_calendar.x` module object.
+packages = ["src/prop_firm_calendar", "src/ftmo_calendar"]
 # Source profiles are data, not code: without this a wheel install has no
 # profiles directory and every run fails on a missing ftmo.toml.
-artifacts = ["src/ftmo_calendar/sources/profiles/*.toml"]
+artifacts = ["src/prop_firm_calendar/sources/profiles/*.toml"]
 
 [tool.ruff]
 line-length = 100
@@ -52,7 +57,7 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.ruff.lint.per-file-ignores]
-"src/ftmo_calendar/web.py" = ["E501"]  # inline HTML/CSS template reads better unwrapped
+"src/prop_firm_calendar/web.py" = ["E501"]  # inline HTML/CSS template reads better unwrapped
 
 [tool.mypy]
 python_version = "3.11"
@@ -61,3 +66,6 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "live_llm: calls a real LLM API and costs money; skipped unless PFC_LIVE_EVAL=1 and LLM_API_KEY are set",
+]

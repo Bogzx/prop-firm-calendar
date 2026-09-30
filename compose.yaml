@@ -1,4 +1,8 @@
 services:
+  # The service keeps its pre-rename name on purpose: compose names the
+  # container after it, and renaming it would start a second container beside
+  # the running one (fighting over the same port and ./data) on the next
+  # `docker compose up`.
   ftmo-calendar:
     build: .
     restart: unless-stopped

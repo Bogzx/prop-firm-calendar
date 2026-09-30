@@ -6,18 +6,55 @@ on:
   pull_request:
 
 jobs:
+  secrets:
+    # New commits only: the push range, or the PR's commits. History before
+    # this job existed is not re-litigated on every push — its one known leak
+    # is allowlisted in .gitleaks.toml (and must be revoked; see SECURITY.md).
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: "8.30.1"
+      GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks (pinned, checksum-verified)
+        run: |
+          curl -sSfL -o gitleaks.tgz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tgz" | sha256sum -c -
+          tar xzf gitleaks.tgz gitleaks
+      - name: Scan new commits
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -n "$PR_BASE" ]; then
+            range="$PR_BASE..$PR_HEAD"
+          elif [ -n "$PUSH_BEFORE" ] && git cat-file -e "$PUSH_BEFORE^{commit}" 2>/dev/null; then
+            range="$PUSH_BEFORE..$GITHUB_SHA"
+          else
+            # new branch or force push: no usable base, scan everything
+            range="$GITHUB_SHA"
+          fi
+          echo "scanning $range"
+          ./gitleaks git --no-banner --redact --verbose --log-opts="$range" .
+
   test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install
-        run: pip install -e .[dev]
+        # The same constraints the Docker image installs with, so the suite
+        # runs against the dependency versions production actually ships.
+        run: pip install -c requirements.lock -e .[dev]
       - name: Lint
         run: ruff check .
       - name: Format check
@@ -28,22 +65,26 @@ jobs:
         run: pytest -v
 
   docker:
-    # The VPS rebuilds this image from main every five minutes
-    # (scripts/autodeploy.sh), so a Dockerfile that does not build reaches
-    # production before it reaches a human. Build it here first.
+    # The VPS rebuilds this image from main (scripts/autodeploy.sh), and only
+    # once this workflow has passed for the commit (scripts/ci_gate.py keys on
+    # the workflow name "CI"; rename it and the gate never opens). Building
+    # the image here is what keeps a broken Dockerfile out of production.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Build image
-        run: docker build -t ftmo-calendar:ci .
+        run: docker build -t prop-firm-calendar:ci .
       - name: Smoke-test the entrypoint
-        run: docker run --rm ftmo-calendar:ci ftmo-calendar --version
+        run: |
+          docker run --rm prop-firm-calendar:ci prop-firm-calendar --version
+          # the pre-0.9 name must keep working for existing deployments
+          docker run --rm prop-firm-calendar:ci ftmo-calendar --version
       - name: Serve mode answers /healthz
         run: |
           mkdir -p data && chmod 777 data
           printf '[calendar]\nenabled = false\n[serve]\nsync_interval_minutes = 60\n' > data/config.toml
           docker run -d --name ftmo-ci -e LLM_API_KEY=ci-not-a-real-key \
-            -p 8080:8080 -v "$PWD/data:/data" ftmo-calendar:ci
+            -p 8080:8080 -v "$PWD/data:/data" prop-firm-calendar:ci
           for _ in $(seq 1 30); do
             code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/healthz || true)
             if [ -n "$code" ] && [ "$code" != "000" ]; then break; fi

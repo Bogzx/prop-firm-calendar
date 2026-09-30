@@ -2,13 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from ftmo_calendar.config import CalendarConfig
-from ftmo_calendar.sinks.auth import AuthError, load_credentials
+from prop_firm_calendar.config import CalendarConfig
+from prop_firm_calendar.sinks.auth import AuthError, load_credentials
 
 
 def test_oauth_without_token_gives_actionable_error(tmp_path: Path) -> None:
     cfg = CalendarConfig(auth_mode="oauth")
-    with pytest.raises(AuthError, match="ftmo-calendar auth"):
+    with pytest.raises(AuthError, match="prop-firm-calendar auth"):
         load_credentials(cfg, tmp_path)
 
 

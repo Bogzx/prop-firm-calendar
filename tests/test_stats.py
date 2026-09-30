@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from ftmo_calendar.stats import StatsStore
+from prop_firm_calendar.stats import StatsStore
 
 DAY1 = datetime(2026, 6, 10, 12, 0, tzinfo=UTC)
 DAY1_LATER = datetime(2026, 6, 10, 18, 0, tzinfo=UTC)
@@ -102,7 +102,7 @@ def test_first_write_lands_on_a_freshly_booted_machine(
     debounce compared against a 0.0 seed. On Windows (uptime in the thousands)
     the same code always flushed. Caught by CI; pinned here.
     """
-    import ftmo_calendar.stats as stats_mod
+    import prop_firm_calendar.stats as stats_mod
 
     monkeypatch.setattr(stats_mod.time, "monotonic", lambda: 3.2)
     path = tmp_path / "stats.json"

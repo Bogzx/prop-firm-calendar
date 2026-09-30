@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from ftmo_calendar.config import ConfigError, load_config
+from prop_firm_calendar.config import ConfigError, load_config
 
 
 def test_defaults_without_config_file(tmp_path: Path) -> None:
@@ -130,3 +130,10 @@ def test_source_profile_defaults_to_ftmo(tmp_path: Path) -> None:
 def test_source_profile_is_selectable(tmp_path: Path) -> None:
     (tmp_path / "config.toml").write_text('[source]\nprofile = "example-firm"\n', encoding="utf-8")
     assert load_config(tmp_path / "config.toml", env={}).source.profile == "example-firm"
+
+
+def test_no_default_summary_names_a_single_firm() -> None:
+    """'other' events come from every firm; a Topstep one must not read 'FTMO'."""
+    from prop_firm_calendar.config import DEFAULT_SUMMARIES
+
+    assert not any("FTMO" in summary for summary in DEFAULT_SUMMARIES.values())

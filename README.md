@@ -1,6 +1,6 @@
 # prop-firm-calendar
 
-> Never get caught by an FTMO maintenance window again.
+> Never get caught by a prop firm's maintenance window or early close again.
 
 [![CI](https://github.com/Bogzx/prop-firm-calendar/actions/workflows/ci.yml/badge.svg)](https://github.com/Bogzx/prop-firm-calendar/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Bogzx/prop-firm-calendar)](https://github.com/Bogzx/prop-firm-calendar/releases)
@@ -22,11 +22,16 @@ https://calendar.bogdantruta.com/feed.ics
 appears on your phone automatically. ([Apple/Outlook instructions and
 per-event-type filters on the live page.](https://calendar.bogdantruta.com))
 
-AutoFtmoCalendar watches [FTMO's trading updates page](https://ftmo.com/en/trading-updates/),
-extracts scheduled platform maintenance and market closures with an LLM, and keeps a
-dedicated Google Calendar in sync — **including updating or removing events when FTMO
+prop-firm-calendar watches the announcement pages of **FTMO, Topstep, Blueberry
+Funded and E8 Markets**, extracts scheduled platform maintenance, market closures and
+early closes with an LLM, and publishes them as a subscribable ICS feed (and,
+optionally, a Google Calendar) — **including updating or removing events when a firm
 reschedules an announcement**. Events come with popup reminders, so you get warned
 *before* the platform goes down, not after.
+
+*Renamed in 0.9.0 from `ftmo-calendar` / AutoFtmoCalendar: the Python package is now
+`prop_firm_calendar` and the command `prop-firm-calendar`. The old command and import
+name still work as aliases.*
 
 ## Two ways to use it
 
@@ -95,19 +100,31 @@ flowchart LR
 - **Deterministic.** Temperature-0 extraction with a strict JSON schema, a repair
   retry, model fallback, and sanity validation (end after start, duration caps,
   plausible date window, timezone taken from the announcement's stated offset).
+- **Shows its evidence.** Each event carries the announcement's own words for it,
+  checked word-for-word against the scraped text and shown in the event
+  description and the JSON API. A quote the page does not contain marks the event
+  *(unconfirmed)*; `[events] require_evidence = true` rejects it instead.
 - **Fails loudly — including when nothing raised.** A broken scraper or expired
   token exits non-zero with clear instructions. So do the quiet failures, which
   are the dangerous ones: if the keyword gate stops matching any post (FTMO
   reworded, or the page moved), or a post that had events suddenly extracts
-  none, the run reports an *anomaly* — non-zero exit, a notification, a 503 on
-  `/healthz`, and a badge on the status page. It never silently does nothing
+  none, or validation rejects an event the announcement contains (a row with no
+  stated offset for a firm that requires one, a garbled time, an over-long
+  window), the run reports an *anomaly* — non-zero exit, a notification, a 503
+  on `/healthz`, and a badge on the status page. It never silently does nothing
   while you trust an empty calendar.
+- **Far-future events are held, not dropped.** Anything beyond
+  `max_days_ahead` is kept in the state and published once it comes within
+  range, with no further LLM call.
 - **Refuses to delete on doubt.** If an announcement's extraction loses events
   with nothing new to replace them — collapsing to zero, or shrinking from 8
   events to 1 — the missing future events are kept and flagged, not removed. A
   degraded extraction and a withdrawn announcement look identical, and only one
   of them is recoverable for someone who planned around the window. (A genuine
   reschedule announces *new* times and reconciles normally.)
+- **One entry per window.** When a firm re-announces a window in a follow-up
+  post, both posts share one calendar entry; it is removed only when the last
+  post announcing it withdraws it.
 - **Never guesses at content.** Scraper selectors are class-anchored per source;
   structural drift raises instead of feeding the LLM whatever element happened
   to match, which is how a redesign turns into confident, wrong calendar entries.
@@ -123,9 +140,9 @@ pip install -e .
 cp .env.example .env                # add your LLM API key
 cp config.example.toml config.toml  # optional: tweak settings
 
-ftmo-calendar auth                  # one-time Google authorization (opens a browser)
-ftmo-calendar run --dry-run         # see what it would do
-ftmo-calendar run                   # sync for real
+prop-firm-calendar auth                  # one-time Google authorization (opens a browser)
+prop-firm-calendar run --dry-run         # see what it would do
+prop-firm-calendar run                   # sync for real
 ```
 
 ## Choosing an LLM provider
@@ -165,9 +182,9 @@ model in `models`.
    *Testing* status get refresh tokens that **expire every 7 days**, which is the
    usual cause of "it keeps asking me to log in". Publishing for personal use does
    not require verification (you'll just see an "unverified app" warning once).
-3. Run `ftmo-calendar auth`. A browser opens; grant access. The token is saved to
+3. Run `prop-firm-calendar auth`. A browser opens; grant access. The token is saved to
    `token.json` and auto-refreshes from then on.
-4. `ftmo-calendar auth --check` shows token health at any time.
+4. `prop-firm-calendar auth --check` shows token health at any time.
 
 The calendar named in `config.toml` (`Trading` by default) is found or created
 automatically.
@@ -204,14 +221,14 @@ WEBHOOK_URL="https://hooks.example.com/services/..."         # generic JSON POST
 You'll receive messages like:
 
 ```
-📅 FTMO Calendar updated
+📅 Trading calendar updated
 ➕ ⚠️ Platform Maintenance — Sat 06 Jun 08:00–14:00 +03
 
-⚠️ ftmo-calendar ran but the result looks wrong:
+⚠️ prop-firm-calendar ran but the result looks wrong:
 • keyword gate matched none of 4 scraped post(s) — the announcement wording
   or the page structure may have changed
 
-❌ ftmo-calendar run failed: OAuth token refresh failed (expired or revoked). ...
+❌ prop-firm-calendar run failed: OAuth token refresh failed (expired or revoked). ...
 ```
 
 This is the push that an ICS feed cannot give you: a subscriber's calendar app
@@ -223,7 +240,7 @@ want structure get the events too:
 ```json
 {
   "kind": "events",
-  "text": "📅 FTMO Calendar updated\n➕ ⚠️ Platform Maintenance — …",
+  "text": "📅 Trading calendar updated\n➕ ⚠️ Platform Maintenance — …",
   "created": ["⚠️ Platform Maintenance — Sat 06 Jun 08:00–14:00 +03"],
   "removed": [],
   "anomalies": []
@@ -237,18 +254,22 @@ tool quietly died.
 ## ICS feed details
 
 Set `[ics] enabled = true` (forced on automatically in feed-only and serve
-modes) and every run writes `ftmo-events.ics`: stable UIDs per event, UTC
-times, popup alarms matching `reminders_minutes`, a `REFRESH-INTERVAL` hint
-for subscribers, and a source link in each event's description.
+modes) and every run writes `ftmo-events.ics`: stable UIDs per event, local
+times in `[calendar] timezone` with a matching `VTIMEZONE`, popup alarms
+matching `reminders_minutes`, a `REFRESH-INTERVAL` hint for subscribers, and a
+link to the event's own announcement in its description.
 
-`ftmo-calendar serve` exposes it over HTTP alongside operations endpoints:
+`prop-firm-calendar serve` exposes it over HTTP alongside operations endpoints:
 
 - `GET /feed.ics` — the calendar feed (add it as "subscribe by URL")
 - `GET /status` — shareable page: next event, sync health, age of the last
   successful sync, subscribe how-to
+- `GET /api/v1/…` — read-only JSON API ([below](#json-api))
 - `GET /healthz` — JSON with `ok`, `status`, `last_run`, `last_success`,
   `last_success_age_seconds`, `stale`, `next_run`, `last_error`, `anomalies`,
-  plus `sources` (per-firm health) and `unhealthy_sources`.
+  plus `sources` (per-firm health, including `events_upcoming`,
+  `events_deferred` and `rejected_extractions` — what each firm's calendar
+  holds and what validation kept out of it) and `unhealthy_sources`.
   **HTTP 503 when not `ok`**, so a plain uptime monitor detects a broken sync.
 
 **Per-firm health.** With several firms configured, each carries its own
@@ -302,6 +323,55 @@ Event titles carry the affected symbols, extracted from the announcement. The
 landing page has checkboxes that build the URL for you; unknown types return
 a 400 listing the valid ones.
 
+## JSON API
+
+`serve` mode also answers read-only JSON, so bots, order routers and dashboards
+can ask "is it safe to trade right now?" without parsing ICS. It is the same
+state and the same de-duplication as the feed (on the public instance from 0.9.0):
+
+```bash
+curl -s 'https://calendar.bogdantruta.com/api/v1/next'
+curl -s 'https://calendar.bogdantruta.com/api/v1/events?firm=topstep&type=early_close,holiday_closure&from=2026-11-01&to=2027-01-31'
+```
+
+| Endpoint | Returns |
+| --- | --- |
+| `GET /api/v1/` | endpoints, configured firms (`firm`, `firm_name`) and event types |
+| `GET /api/v1/events` | windows overlapping `[from, to)`, sorted by start |
+| `GET /api/v1/next` | per configured firm: the window in progress, else the next one — `next: null` when nothing is scheduled |
+
+Parameters (all optional): `firm` and `type` take comma-separated values
+(unknown ones are a `400` listing the valid values); `from` and `to` take an ISO
+date (`2026-12-24`, midnight UTC) or timestamp (`2026-12-24T15:00:00Z`; no
+offset means UTC). `from` defaults to *now*, so a bare `/api/v1/events` is
+"what is live or coming up"; pass an earlier `from` for recent history (the
+state keeps about 45 days). `next` honours `firm` and `type`.
+
+Each event:
+
+```json
+{
+  "id": "4560b9cb2193c0f3",
+  "firm": "topstep", "firm_name": "Topstep",
+  "type": "early_close", "summary": "⏳ Early Close — Thanksgiving",
+  "start": "2026-11-26T11:45:00-06:00", "end": "2026-11-26T23:59:00-06:00",
+  "start_utc": "2026-11-26T17:45:00+00:00", "end_utc": "2026-11-27T05:59:00+00:00",
+  "status": "upcoming",
+  "source_url": "https://help.topstep.com/en/articles/13350348-topstep-holiday-trading-hours"
+}
+```
+
+`status` is `upcoming`, `live` or `past` at `generated_at`; `start`/`end` are in
+the offset the calendar stores, `*_utc` are the same instants in UTC. `id` is
+the event's stable identity (the ICS `UID` prefix). Where the extraction quoted
+its source, `evidence` carries that quote.
+
+Responses carry `Access-Control-Allow-Origin: *` (callable from any web page;
+no cookies are read or set), `Cache-Control: public, max-age=300`, and an
+weak `ETag` — send it back as `If-None-Match` for a `304` while the answer is
+unchanged (it ignores `generated_at`, so a 304 does not refresh that field). The API is versioned in
+the path; fields may be added to `v1`, never removed or renamed.
+
 ## Built-in statistics
 
 Serve mode keeps simple, self-hosted usage stats: page views, unique visitors
@@ -350,10 +420,13 @@ never moves). Rather than pick which week to be wrong in, that profile sets
 so the announcement's offset is used and a row without one is **rejected**
 rather than published at a guessed hour.
 
+FundedNext, The5ers and FundingPips were checked and publish no scrapeable
+schedule page today; see [docs/FIRM_CANDIDATES.md](docs/FIRM_CANDIDATES.md).
+
 ### Adding another firm
 
 A source is a TOML file, not a Python module. Copy
-[`src/ftmo_calendar/sources/profiles/example-firm.toml`](src/ftmo_calendar/sources/profiles/example-firm.toml),
+[`src/prop_firm_calendar/sources/profiles/example-firm.toml`](src/prop_firm_calendar/sources/profiles/example-firm.toml),
 fill in the page's selectors, and record a fixture:
 
 ```bash
@@ -410,33 +483,33 @@ you on failure.
 **Linux (cron), every 6 hours:**
 
 ```cron
-0 */6 * * * cd /opt/AutoFtmoCalendar && .venv/bin/ftmo-calendar run >> cron.log 2>&1
+0 */6 * * * cd /opt/prop-firm-calendar && .venv/bin/prop-firm-calendar run >> cron.log 2>&1
 ```
 
 **Windows (Task Scheduler):**
 
 ```powershell
-schtasks /Create /TN "FTMO Calendar" /SC HOURLY /MO 6 `
-  /TR "C:\path\to\AutoFtmoCalendar\.venv\Scripts\ftmo-calendar.exe --config C:\path\to\AutoFtmoCalendar\config.toml run"
+schtasks /Create /TN "Prop Firm Calendar" /SC HOURLY /MO 6 `
+  /TR "C:\path\to\prop-firm-calendar\.venv\Scripts\prop-firm-calendar.exe --config C:\path\to\prop-firm-calendar\config.toml run"
 ```
 
 ## CLI reference
 
 | Command | What it does |
 | --- | --- |
-| `ftmo-calendar run` | Scrape, extract, and sync the calendar (default command) |
-| `ftmo-calendar run --dry-run` | Print planned creates/updates/deletes; touch nothing |
-| `ftmo-calendar auth` | One-time interactive Google authorization (OAuth mode) |
-| `ftmo-calendar auth --check` | Report credential/token health |
-| `ftmo-calendar status` | Show tracked posts and the events created for them |
-| `ftmo-calendar serve [--port N]` | Periodic sync + hosted ICS feed and status page |
+| `prop-firm-calendar run` | Scrape, extract, and sync the calendar (default command) |
+| `prop-firm-calendar run --dry-run` | Print planned creates/updates/deletes; touch nothing |
+| `prop-firm-calendar auth` | One-time interactive Google authorization (OAuth mode) |
+| `prop-firm-calendar auth --check` | Report credential/token health |
+| `prop-firm-calendar status` | Show tracked posts and the events created for them |
+| `prop-firm-calendar serve [--port N]` | Periodic sync + hosted ICS feed and status page |
 | `--config PATH` | Use a config file other than `./config.toml` |
 | `-v` | Debug logging |
 
 ## Troubleshooting
 
 - **"Token refresh failed" every week** → your OAuth app is in *Testing* status.
-  Publish it to Production (see setup above), then `ftmo-calendar auth` once more.
+  Publish it to Production (see setup above), then `prop-firm-calendar auth` once more.
   Or switch to a service account and never think about tokens again.
 - **"No trading-update posts found"** → FTMO changed their page structure. Please
   [open an issue](https://github.com/Bogzx/prop-firm-calendar/issues).
@@ -455,11 +528,28 @@ schtasks /Create /TN "FTMO Calendar" /SC HOURLY /MO 6 `
 ## Development
 
 ```bash
-pip install -e .[dev]
-pytest          # run tests
+pip install -c requirements.lock -e .[dev]
+pytest          # run tests (offline; LLM backends are scripted)
 ruff check .    # lint
 mypy src        # type-check
 ```
+
+**Is the model still right?** The golden tests pin hand-verified events and
+never call a model. `prop-firm-calendar eval` does: it runs the production
+prompt, hints and consensus over every `tests/fixtures/<firm>/*.expected.json`
+several times and fails on any missing or extra event or wrong stated offset
+(it also reports run-to-run instability, lost `affected` text and unverified
+evidence quotes). It makes real, billed API calls:
+
+```bash
+prop-firm-calendar --config config.toml eval --fixtures tests/fixtures --runs 3 --markdown eval.md
+PFC_LIVE_EVAL=1 LLM_API_KEY=... pytest -m live_llm    # the same, as a pytest job
+```
+
+In CI it is the manual/weekly **LLM eval** workflow
+(`.github/workflows/llm-eval.yml`), which needs the `LLM_API_KEY` secret and
+optionally `LLM_PROVIDER` / `LLM_BASE_URL` / `LLM_MODELS` repository variables;
+without the secret it skips.
 
 The architecture and roadmap live in [`docs/superpowers/specs/`](docs/superpowers/specs/).
 

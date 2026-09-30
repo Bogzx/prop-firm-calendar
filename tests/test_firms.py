@@ -13,15 +13,15 @@ from pathlib import Path
 
 import pytest
 
-from ftmo_calendar.config import AppConfig, ConfigError, FirmConfig, load_config
-from ftmo_calendar.firms import AllFirmsFailed, FirmOutcome, MultiRunReport, run_firms
-from ftmo_calendar.models import SourcePost
-from ftmo_calendar.parsing.llm import RawEvent
-from ftmo_calendar.sinks.ics import render_ics
-from ftmo_calendar.sinks.null import StateOnlySink
-from ftmo_calendar.sources.factory import ResolvedFirm, resolve_firm
-from ftmo_calendar.sources.profile import SourceProfile
-from ftmo_calendar.state import State
+from prop_firm_calendar.config import AppConfig, ConfigError, FirmConfig, load_config
+from prop_firm_calendar.firms import AllFirmsFailed, FirmOutcome, MultiRunReport, run_firms
+from prop_firm_calendar.models import SourcePost
+from prop_firm_calendar.parsing.llm import RawEvent
+from prop_firm_calendar.sinks.ics import render_ics
+from prop_firm_calendar.sinks.null import StateOnlySink
+from prop_firm_calendar.sources.factory import ResolvedFirm, resolve_firm
+from prop_firm_calendar.sources.profile import SourceProfile
+from prop_firm_calendar.state import State
 
 NOW = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
 
@@ -288,7 +288,7 @@ def test_a_run_report_labels_its_firm() -> None:
 
 
 def build_state() -> State:
-    from ftmo_calendar.state import PostState, TrackedEvent
+    from prop_firm_calendar.state import PostState, TrackedEvent
 
     def event(key: str, kind: str) -> TrackedEvent:
         return TrackedEvent(
@@ -349,3 +349,33 @@ def test_a_feed_for_a_firm_with_nothing_scheduled_is_valid_and_empty() -> None:
     assert "BEGIN:VEVENT" not in ics
     assert "BEGIN:VCALENDAR" in ics and "END:VCALENDAR" in ics
     assert "X-WR-CALNAME:E8 Markets Trading Updates" in ics
+
+
+def test_a_firms_outcome_reports_its_calendar_and_rejections(tmp_path: Path) -> None:
+    cfg = write_config(tmp_path, "[[firms]]\nprofile = 'ftmo'\n")
+    good = RawEvent(
+        event_type="maintenance",
+        start_time="2026-06-13T08:00:00",
+        end_time="2026-06-13T10:00:00",
+        stated_utc_offset="+03:00",
+    )
+    far = good.model_copy(
+        update={"start_time": "2027-01-01T08:00:00", "end_time": "2027-01-01T10:00:00"}
+    )
+    bad = good.model_copy(update={"end_time": "2026-06-13T07:00:00"})
+    result = run_firms(
+        config=cfg,
+        sink=StateOnlySink(),
+        state=State(),
+        make_extractor=lambda resolved: StubExtractor([good, far, bad]),
+        now=NOW,
+        resolve=stub_resolver({"ftmo": StubSource([make_post("p1")])}),
+        stagger_fn=lambda seconds: 0.0,
+    )
+    [outcome] = result.outcomes
+    assert outcome.events_upcoming == 1
+    assert outcome.events_deferred == 1
+    assert outcome.rejected == ("p1: maintenance 2026-06-13T08:00:00: end is not after start",)
+    assert outcome.ok is False  # the run that dropped it raises the anomaly
+    assert outcome.as_dict()["rejected"] == list(outcome.rejected)
+    assert result.totals().events_deferred == 1

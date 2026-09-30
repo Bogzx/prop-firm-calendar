@@ -1,6 +1,72 @@
 # Changelog
 
-## Unreleased — multi-firm
+## 0.9.0 — 2026-09-30
+
+First version string since 0.8.1. It covers the two sections below it, which
+were merged and deployed in August without a version bump, plus the fixes
+here. **Upgrading needs no config, env or systemd change** (see "Renamed").
+
+### Fixed
+- **Every event linked to FTMO.** The feed passed `[source] url` — FTMO's
+  index page — as the link for every event, so Topstep, Blueberry Funded and E8
+  Markets rows all sent subscribers to ftmo.com. Each event now links to its own
+  announcement (state records the post URL; older entries fall back to their
+  firm's page and heal on the next sync)
+- **Events beyond `max_days_ahead` were lost for good.** They were rejected,
+  and an unchanged post is never re-extracted, so Topstep's 2027-01-01 closure
+  never appeared even once it was in range. They are now held in state
+  (`deferred`) and published once within range, with no LLM call — also for
+  posts that have since left the index page. After upgrading, each tracked post
+  is re-extracted **once** (state written before 0.9 cannot say what it dropped)
+- **Rejected extractions were invisible.** Only a log line said an event had
+  been dropped (e.g. an E8 row with no stated offset). A rejection that drops a
+  real event now raises a per-firm anomaly (non-zero exit, notification, 503 on
+  `/healthz` for that run), and each `/healthz` source reports
+  `rejected_extractions`, `events_upcoming` and `events_deferred`
+- **Auto-deploy waits for CI.** `scripts/autodeploy.sh` rebuilt production from
+  `main` whatever CI said; it now deploys a commit only after the `CI` workflow
+  passed for it (`scripts/ci_gate.py`, stdlib only). The first deploy of this
+  version is still made by the old script; opt out with
+  `AUTODEPLOY_REQUIRE_CI=0` — see docs/DEPLOYMENT.md
+
+### Added
+- **Read-only JSON API** in serve mode: `/api/v1/events?firm=&type=&from=&to=`,
+  `/api/v1/next` (the current or next window per firm) and `/api/v1/` (index).
+  CORS-open, `Cache-Control: public, max-age=300`, `ETag`/`304`. Same state
+  and de-duplication as the feed
+- **Evidence spans**: each event carries the announcement's own words for it,
+  verified word-for-word against the scraped text (ICS/Google description, API).
+  An unfound quote publishes the event as *(unconfirmed)*;
+  `[events] require_evidence = true` rejects it
+- **`prop-firm-calendar eval`**: the production prompt over every golden fixture
+  N times against a real model, diffed against the expected events; also a
+  `live_llm` pytest marker and a manual/weekly workflow that needs the
+  `LLM_API_KEY` secret
+- **Secret scanning**: a gitleaks CI job over each push/PR's new commits, an
+  optional pre-commit config, and `SECURITY.md`
+
+### Changed
+- **One calendar entry per window across posts** (Google sync): a follow-up
+  post re-announcing a window shares the existing entry, which is deleted only
+  when the last post announcing it withdraws it. Duplicates created by earlier
+  versions are merged on the first run after upgrading
+
+### Renamed
+- Package `ftmo_calendar` → **`prop_firm_calendar`**, distribution
+  `ftmo-calendar` → **`prop-firm-calendar`**, command **`prop-firm-calendar`**
+- Kept as aliases, so nothing deployed breaks: the **`ftmo-calendar`** command
+  (same entry point), and **`import ftmo_calendar[.x]`**, which resolves to the
+  very same module objects and emits a `DeprecationWarning`
+- Deliberately *not* renamed: ICS `UID`s (`…@ftmo-calendar` — changing them
+  would duplicate every subscriber's events), the Google `aftc_key` reconcile
+  property, the compose service `ftmo-calendar`, the `ftmo-autodeploy` systemd
+  unit, the `ftmo` container user, and the `ftmo-events.ics` default path
+- PRODID is now `-//Bogzx//prop-firm-calendar//EN` and descriptions credit
+  `prop-firm-calendar`; those two strings are the only bytes of the feed the
+  rename moved (pinned in `tests/test_ftmo_compatibility.py`)
+- Change-notification heading reads "Trading calendar updated"
+
+## Multi-firm — merged 2026-08-17…24 (#3–#5), shipped without a version bump
 
 It is no longer an FTMO tool. Three more prop firms ship, each verified against
 its live site, and the feed can be sliced per firm.
@@ -91,7 +157,7 @@ ICS SHA-256 matches; pinned in `tests/test_ftmo_compatibility.py`).
   nothing disappears from a per-firm feed on upgrade. `firm` is deliberately
   **not** part of `event_key`
 
-## Unreleased
+## Self-hosting fixes — merged 2026-08-17 (#2), shipped without a version bump
 
 Self-hosting works again, silent failures became loud ones, and a prop firm is
 now a TOML file.
