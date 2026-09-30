@@ -118,6 +118,9 @@ flowchart LR
   degraded extraction and a withdrawn announcement look identical, and only one
   of them is recoverable for someone who planned around the window. (A genuine
   reschedule announces *new* times and reconciles normally.)
+- **One entry per window.** When a firm re-announces a window in a follow-up
+  post, both posts share one calendar entry; it is removed only when the last
+  post announcing it withdraws it.
 - **Never guesses at content.** Scraper selectors are class-anchored per source;
   structural drift raises instead of feeding the LLM whatever element happened
   to match, which is how a redesign turns into confident, wrong calendar entries.

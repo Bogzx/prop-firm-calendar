@@ -704,3 +704,167 @@ def test_benign_rejections_raise_nothing(tmp_path: Path) -> None:
     assert report.rejections == 1
     assert report.anomalies == []
     assert state.posts[POST.post_key].rejected == []
+
+
+# -- one calendar entry per window, shared across posts -------------------
+
+FOLLOW_UP = SourcePost(
+    post_key="trading-update-2026-06-05",
+    title="Trading Update | Jun 5 2026",
+    text="reminder: ctrader maintenance on Saturday 6 Jun 2026 08:00 to 14:00 GMT+3",
+    url="https://ftmo.com/en/blog/trading-updates/trading-update-5-jun-2026/",
+)
+
+
+class PerPostExtractor:
+    """Returns a different extraction per post text."""
+
+    def __init__(self, by_text: dict[str, list[RawEvent]]) -> None:
+        self.by_text = by_text
+        self.calls = 0
+
+    def extract(self, text: str) -> list[RawEvent]:
+        self.calls += 1
+        return self.by_text[text]
+
+
+def _sync(tmp_path: Path, state: State, sink: FakeSink, by_post: dict, now: datetime = NOW):
+    posts = list(by_post)
+    extractor = PerPostExtractor({p.text: events for p, events in by_post.items()})
+    return _run(tmp_path, state, extractor, now, posts=posts, sink=sink)
+
+
+def test_a_window_announced_twice_gets_one_calendar_entry(tmp_path: Path) -> None:
+    state, sink = State(), FakeSink()
+    report = _sync(tmp_path, state, sink, {POST: [RAW], FOLLOW_UP: [RAW]})
+    assert len(sink.created) == 1
+    assert report.events_created == 1 and report.events_kept == 1
+    first = state.posts[POST.post_key].events[0]
+    second = state.posts[FOLLOW_UP.post_key].events[0]
+    assert first.event_key != second.event_key  # identity stays per post
+    assert first.google_event_id == second.google_event_id
+
+
+def test_a_shared_entry_is_deleted_only_when_the_last_post_withdraws(tmp_path: Path) -> None:
+    state, sink = State(), FakeSink()
+    _sync(tmp_path, state, sink, {POST: [RAW], FOLLOW_UP: [RAW]})
+    [shared_id] = {e.google_event_id for p in state.posts.values() for e in p.events}
+
+    # The first post is edited: the window moves out of it (a new event
+    # arrives, so this is a genuine change, not a degraded extraction).
+    edited = dataclasses.replace(POST, text=POST.text + " (updated)")
+    report = _sync(tmp_path, state, sink, {edited: [RAW_B], FOLLOW_UP: [RAW]})
+    assert sink.deleted == []
+    assert report.events_deleted == 0
+
+    # Now the follow-up drops it too: that is the last reference.
+    follow_edit = dataclasses.replace(FOLLOW_UP, text=FOLLOW_UP.text + " (updated)")
+    report = _sync(tmp_path, state, sink, {edited: [RAW_B], follow_edit: [RAW_C]})
+    assert sink.deleted == [shared_id]
+    assert report.events_deleted == 1
+
+
+def test_both_posts_withdrawing_in_one_run_deletes_once(tmp_path: Path) -> None:
+    state, sink = State(), FakeSink()
+    _sync(tmp_path, state, sink, {POST: [RAW], FOLLOW_UP: [RAW]})
+    a = dataclasses.replace(POST, text=POST.text + " v2")
+    b = dataclasses.replace(FOLLOW_UP, text=FOLLOW_UP.text + " v2")
+    _sync(tmp_path, state, sink, {a: [RAW_B], b: [RAW_C]})
+    assert len(sink.deleted) == 1
+
+
+def test_different_symbols_at_the_same_minute_are_not_shared(tmp_path: Path) -> None:
+    other = RAW.model_copy(update={"affected": "GER40.cash"})
+    state, sink = State(), FakeSink()
+    _sync(tmp_path, state, sink, {POST: [RAW], FOLLOW_UP: [other]})
+    assert len(sink.created) == 2
+
+
+def test_windows_are_not_shared_across_firms(tmp_path: Path) -> None:
+    state, sink = State(), FakeSink()
+    _sync(tmp_path, state, sink, {POST: [RAW]})
+    run_pipeline(
+        source=FakeSource([FOLLOW_UP]),
+        extractor=FakeExtractor([RAW]),
+        sink=sink,
+        state=state,
+        config=make_config(tmp_path),
+        now=NOW,
+        firm="other-firm",
+    )
+    assert len(sink.created) == 2
+
+
+def _legacy_duplicate_state() -> State:
+    """What 0.8/0.9-pre state looks like: two Google events for one window."""
+    events, _ = validate_events(
+        [RAW], POST, EventRules(), ZoneInfo("Etc/GMT-3"), ZoneInfo("Etc/GMT-3"), now=NOW
+    )
+    twin, _ = validate_events(
+        [RAW], FOLLOW_UP, EventRules(), ZoneInfo("Etc/GMT-3"), ZoneInfo("Etc/GMT-3"), now=NOW
+    )
+
+    def tracked(event, gid: str) -> TrackedEvent:
+        return TrackedEvent(
+            event.event_key,
+            gid,
+            event.end.isoformat(),
+            summary=event.summary,
+            start=event.start.isoformat(),
+            event_type=event.event_type.value,
+        )
+
+    return State(
+        posts={
+            POST.post_key: PostState(
+                POST.content_hash, NOW.isoformat(), [tracked(events[0], "g-old")], firm="ftmo"
+            ),
+            FOLLOW_UP.post_key: PostState(
+                FOLLOW_UP.content_hash, NOW.isoformat(), [tracked(twin[0], "g-dup")], firm="ftmo"
+            ),
+        }
+    )
+
+
+def test_existing_duplicates_are_merged_into_the_oldest_entry(tmp_path: Path) -> None:
+    """The migration: duplicates created before sharing collapse on the next run."""
+    state, sink = _legacy_duplicate_state(), FakeSink()
+    report = _sync(tmp_path, state, sink, {POST: [RAW], FOLLOW_UP: [RAW]})
+    assert sink.deleted == ["g-dup"]
+    assert sink.created == []
+    assert report.duplicates_merged == 1
+    assert "1 duplicate calendar entries merged" in report.summary()
+    ids = {e.google_event_id for p in state.posts.values() for e in p.events}
+    assert ids == {"g-old"}
+
+    # Idempotent: nothing left to merge.
+    again = FakeSink()
+    assert _sync(tmp_path, state, again, {POST: [RAW], FOLLOW_UP: [RAW]}).duplicates_merged == 0
+    assert again.deleted == []
+
+
+def test_the_merge_survives_a_save_and_load(tmp_path: Path) -> None:
+    state, sink = _legacy_duplicate_state(), FakeSink()
+    _sync(tmp_path, state, sink, {POST: [RAW], FOLLOW_UP: [RAW]})
+    save_state(state, tmp_path / "state.json")
+    loaded = load_state(tmp_path / "state.json")
+    assert {e.google_event_id for p in loaded.posts.values() for e in p.events} == {"g-old"}
+
+
+def test_a_failed_merge_delete_keeps_the_duplicate_and_the_sync(tmp_path: Path) -> None:
+    class FlakySink(FakeSink):
+        def delete_event(self, event_id: str) -> None:
+            raise RuntimeError("Google 500")
+
+    state = _legacy_duplicate_state()
+    report = _sync(tmp_path, state, FlakySink(), {POST: [RAW], FOLLOW_UP: [RAW]})
+    assert report.duplicates_merged == 0
+    ids = {e.google_event_id for p in state.posts.values() for e in p.events}
+    assert ids == {"g-old", "g-dup"}  # untouched, retried next run
+
+
+def test_a_dry_run_merges_nothing(tmp_path: Path) -> None:
+    state, sink = _legacy_duplicate_state(), FakeSink()
+    extractor = PerPostExtractor({POST.text: [RAW], FOLLOW_UP.text: [RAW]})
+    _run(tmp_path, state, extractor, NOW, posts=[POST, FOLLOW_UP], sink=sink, dry_run=True)
+    assert sink.deleted == []

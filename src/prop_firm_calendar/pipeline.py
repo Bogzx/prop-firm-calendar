@@ -45,6 +45,8 @@ class RunReport:
     #: Extractions held back for being beyond max_days_ahead; see
     #: PostState.deferred.
     events_deferred: int = 0
+    #: Duplicate calendar entries for one window collapsed into a shared one.
+    duplicates_merged: int = 0
     #: One line per rejection that dropped a real event (not benign ones).
     rejected_lines: list[str] = field(default_factory=list)
     dry_run: bool = False
@@ -74,6 +76,8 @@ class RunReport:
         )
         if self.events_deferred:
             text += f", {self.events_deferred} deferred (beyond max_days_ahead)"
+        if self.duplicates_merged:
+            text += f", {self.duplicates_merged} duplicate calendar entries merged"
         if self.anomalies:
             text += f" | {len(self.anomalies)} anomaly/anomalies: " + "; ".join(self.anomalies)
         return text
@@ -153,7 +157,7 @@ def run_pipeline(
         rejected = _count_rejections(post, rejections, report)
 
         new_post_state = _reconcile(
-            post, events, post_state, sink, report, dry_run, now, config.events
+            post, events, post_state, sink, report, dry_run, now, config.events, state, firm
         )
         new_post_state.firm = firm or (post_state.firm if post_state else "")
         new_post_state.url = post.url
@@ -179,11 +183,14 @@ def run_pipeline(
                 calendar_tz,
                 now,
                 require_stated_offset,
+                state,
+                firm,
             )
 
     _detect_anomalies(report, gate)
 
     if not dry_run:
+        _merge_duplicate_windows(state, firm, sink, report, now)
         state.prune(now=now)
     return report
 
@@ -240,6 +247,8 @@ def _promote_deferred(
     calendar_tz: ZoneInfo,
     now: datetime,
     require_stated_offset: bool,
+    state: State,
+    firm: str,
 ) -> None:
     """Publish held-back events that are now within max_days_ahead. No LLM call."""
     raws: list[RawEvent] = []
@@ -267,7 +276,7 @@ def _promote_deferred(
         if event.event_key in known:
             continue
         logger.info("Deferred event %s is now within range; publishing", event.event_key)
-        tracked = _publish(event, sink, report, dry_run)
+        tracked = _publish(event, sink, report, dry_run, state, firm, post.post_key)
         if tracked is not None:
             promoted.append(tracked)
     if not dry_run:
@@ -300,6 +309,86 @@ def _detect_anomalies(report: RunReport, keywords: tuple[str, ...]) -> None:
         )
         logger.error("%s", message)
         report.anomalies.append(message)
+
+
+Window = tuple[str, str, str, str, str]
+
+
+def _window(firm: str, event_type: str, start: str, end: str, summary: str) -> Window:
+    """What makes two events the same interruption for a subscriber.
+
+    Summary is included — it carries the affected symbols, so two posts closing
+    different instruments at the same minute stay two events. The ICS feed and
+    status page dedupe on the same identity.
+    """
+    return (firm, event_type, start, end, summary)
+
+
+def _tracked_window(firm: str, tracked: TrackedEvent) -> Window:
+    return _window(firm, tracked.event_type, tracked.start, tracked.end, tracked.summary)
+
+
+def _shared_window(
+    state: State, firm: str, post_key: str, event: TradingEvent
+) -> TrackedEvent | None:
+    """An event another post of this firm already tracks for the same window."""
+    wanted = _window(
+        firm, event.event_type.value, event.start.isoformat(), event.end.isoformat(), event.summary
+    )
+    for key, post in state.posts.items():
+        if key == post_key or post.firm != firm:
+            continue
+        for tracked in post.events:
+            if tracked.start and _tracked_window(firm, tracked) == wanted:
+                return tracked
+    return None
+
+
+def _other_references(state: State, backend_id: str, post_key: str) -> list[str]:
+    """Posts other than `post_key` whose events point at this calendar entry.
+
+    The reference count is derived from the state rather than stored, so it
+    cannot drift from what the posts actually track.
+    """
+    return [
+        key
+        for key, post in state.posts.items()
+        if key != post_key and any(e.google_event_id == backend_id for e in post.events)
+    ]
+
+
+def _merge_duplicate_windows(
+    state: State, firm: str, sink: EventSink, report: RunReport, now: datetime
+) -> None:
+    """Collapse duplicate calendar entries created before windows were shared.
+
+    State written by earlier versions has one Google event per announcing
+    post for the same window. The oldest post's entry survives (posts are in
+    arrival order), the others are deleted from the calendar and their
+    TrackedEvents repointed. A failed delete leaves that duplicate as it was,
+    to be retried next run. Idempotent: merged windows share one id.
+    """
+    groups: dict[Window, list[TrackedEvent]] = {}
+    for post in state.posts.values():
+        if post.firm != firm:
+            continue
+        for tracked in post.events:
+            if tracked.start and _future(tracked, now):
+                groups.setdefault(_tracked_window(firm, tracked), []).append(tracked)
+    for members in groups.values():
+        survivor = members[0].google_event_id
+        extras = {m.google_event_id for m in members} - {survivor}
+        for extra in sorted(extras):
+            try:
+                sink.delete_event(extra)
+            except Exception as e:  # noqa: BLE001 - retried next run; never fail the sync
+                logger.warning("Could not remove duplicate calendar entry %s: %s", extra, e)
+                continue
+            for member in members:
+                if member.google_event_id == extra:
+                    member.google_event_id = survivor
+            report.duplicates_merged += 1
+            logger.info("Merged duplicate calendar entry %s into %s", extra, survivor)
 
 
 def _describe_event(event: TradingEvent) -> str:
@@ -347,6 +436,8 @@ def _reconcile(
     dry_run: bool,
     now: datetime,
     rules: EventRules,
+    state: State,
+    firm: str,
 ) -> PostState:
     old = {e.event_key: e for e in (post_state.events if post_state else [])}
     new_keys = {e.event_key for e in events}
@@ -385,6 +476,17 @@ def _reconcile(
         if not _future(old_event, now):
             tracked.append(old_event)  # it happened; preserve calendar history
             continue
+        sharers = _other_references(state, old_event.google_event_id, post.post_key)
+        if sharers:
+            # Another post still announces this window and shares the one
+            # calendar entry: this post letting go is not a withdrawal.
+            logger.info(
+                "Post %s no longer lists %s; still announced by %s, keeping the entry",
+                post.post_key,
+                key,
+                ", ".join(sharers),
+            )
+            continue
         logger.info("Announcement changed: removing stale event %s", key)
         if not dry_run:
             sink.delete_event(old_event.google_event_id)
@@ -396,7 +498,7 @@ def _reconcile(
             tracked.append(old[event.event_key])
             report.events_kept += 1
             continue
-        published = _publish(event, sink, report, dry_run)
+        published = _publish(event, sink, report, dry_run, state, firm, post.post_key)
         if published is not None:
             tracked.append(published)
 
@@ -404,9 +506,31 @@ def _reconcile(
 
 
 def _publish(
-    event: TradingEvent, sink: EventSink, report: RunReport, dry_run: bool
+    event: TradingEvent,
+    sink: EventSink,
+    report: RunReport,
+    dry_run: bool,
+    state: State,
+    firm: str,
+    post_key: str,
 ) -> TrackedEvent | None:
-    """Create (or adopt) one event in the sink; None on a dry run."""
+    """Create (or adopt) one event in the sink; None on a dry run.
+
+    A window another post of the same firm already tracks is *shared*, not
+    created again: FTMO re-announces holiday schedules in follow-up posts, and
+    each post used to get its own Google event for the same window. The new
+    post's TrackedEvent points at the existing calendar entry instead, and
+    the entry is deleted only once no post references it (see _reconcile).
+    """
+    shared = _shared_window(state, firm, post_key, event)
+    if shared is not None:
+        logger.info(
+            "Event %s is the same window as %s; sharing its calendar entry",
+            event.event_key,
+            shared.event_key,
+        )
+        report.events_kept += 1
+        return _track(event, shared.google_event_id)
     if dry_run:
         logger.info("[dry-run] would create '%s' at %s", event.summary, event.start)
         report.events_created += 1
