@@ -22,7 +22,7 @@ DEFAULT_SUMMARIES: dict[str, str] = {
     "early_close": "⏳ Early Close",
     "late_open": "🕗 Late Open",
     "symbol_event": "📌 Forced Action",
-    "other": "ℹ️ FTMO Trading Update",
+    "other": "ℹ️ Trading Update",
     "holiday_hours": "🕒 Modified Trading Hours",  # legacy state entries only
 }
 
