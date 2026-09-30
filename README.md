@@ -419,6 +419,9 @@ never moves). Rather than pick which week to be wrong in, that profile sets
 so the announcement's offset is used and a row without one is **rejected**
 rather than published at a guessed hour.
 
+FundedNext, The5ers and FundingPips were checked and publish no scrapeable
+schedule page today; see [docs/FIRM_CANDIDATES.md](docs/FIRM_CANDIDATES.md).
+
 ### Adding another firm
 
 A source is a TOML file, not a Python module. Copy
