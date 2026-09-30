@@ -214,3 +214,22 @@ def test_the_written_feed_links_each_firm_to_its_own_page(tmp_path: Path) -> Non
     ics = (tmp_path / "feed.ics").read_text(encoding="utf-8")
     assert "Source: https://help.topstep.com/" in ics
     assert "ftmo.com" not in ics
+
+
+def test_a_profile_given_by_path_is_named_as_its_posts_are(tmp_path: Path) -> None:
+    """[[firms]] profile = './x.toml' labels posts 'x'; feeds and defaults must agree."""
+    from prop_firm_calendar.config import load_config
+    from prop_firm_calendar.sources.profile import PROFILE_DIR
+
+    custom = tmp_path / "myfirm.toml"
+    custom.write_text(
+        (PROFILE_DIR / "topstep.toml")
+        .read_text(encoding="utf-8")
+        .replace('name = "topstep"', 'name = "myfirm"'),
+        encoding="utf-8",
+    )
+    path = tmp_path / "config.toml"
+    path.write_text(f"[[firms]]\nprofile = '{custom.as_posix()}'\n", encoding="utf-8")
+    config = load_config(path, env={})
+    assert cli._default_firm(config) == "myfirm"
+    assert set(cli._firm_titles(config)) == {"myfirm"}

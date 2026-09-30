@@ -173,7 +173,21 @@ def _default_firm(config: AppConfig) -> str:
     The first configured firm, because that is exactly what the single
     `[source]` scraper was when those entries were written. See State.firm_of.
     """
-    return config.firms[0].profile if config.firms else ""
+    return _firm_name(config.firms[0].profile) if config.firms else ""
+
+
+def _firm_name(profile_ref: str) -> str:
+    """The name state and feeds use for a firm: its profile's `name`.
+
+    Not the `[[firms]] profile` value itself, which may be a path to a TOML
+    file ("./myfirm.toml") while the posts it produces are labelled "myfirm".
+    """
+    from prop_firm_calendar.sources.profile import load_profile
+
+    try:
+        return load_profile(profile_ref).name
+    except ConfigError:  # pragma: no cover - load_config already validated
+        return profile_ref
 
 
 def _write_feed(config: AppConfig, state: State) -> None:
@@ -316,7 +330,7 @@ def _cmd_serve(config: AppConfig, port_override: int | None) -> int:
 
     from prop_firm_calendar.stats import StatsStore
 
-    names = [f.profile for f in config.enabled_firms]
+    names = [_firm_name(f.profile) for f in config.enabled_firms]
     return serve_forever(
         host=config.serve.host,
         port=port_override or config.serve.port,
