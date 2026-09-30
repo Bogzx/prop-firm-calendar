@@ -151,6 +151,11 @@ class EventRules:
     #: to a subset with nothing new extracted — to delete the future events it
     #: had created. Off by default — see pipeline._reconcile.
     delete_on_empty_extraction: bool = False
+    #: Reject events whose extraction quoted no evidence, or a quote that does
+    #: not occur in the announcement. Off by default: such an event is instead
+    #: published marked low-confidence, which keeps a real window visible when
+    #: a model merely paraphrased its quote.
+    require_evidence: bool = False
     summaries: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_SUMMARIES))
 
 
@@ -327,6 +332,7 @@ def load_config(path: Path, env: Mapping[str, str] | None = None) -> AppConfig:
         delete_on_empty_extraction=events_raw.get(
             "delete_on_empty_extraction", EventRules.delete_on_empty_extraction
         ),
+        require_evidence=events_raw.get("require_evidence", EventRules.require_evidence),
         summaries=summaries,
     )
 

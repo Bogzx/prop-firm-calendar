@@ -251,8 +251,13 @@ def render_ics(
             stamp("DTEND", end_dt),
             f"SUMMARY:{_escape(event.summary)}",
         ]
-        if link:
-            lines.append(f"DESCRIPTION:Source: {_escape(link)}\\nCreated by prop-firm-calendar")
+        if link or event.evidence:
+            # The announcement's own words, when the extraction quoted them and
+            # the quote was found in the text: lets a subscriber check the
+            # window without opening the page.
+            quote = f"\u201c{_escape(event.evidence)}\u201d\\n" if event.evidence else ""
+            source = f"Source: {_escape(link)}\\n" if link else ""
+            lines.append(f"DESCRIPTION:{quote}{source}Created by prop-firm-calendar")
         for minutes in reminders_minutes:
             lines += [
                 "BEGIN:VALARM",

@@ -49,6 +49,10 @@ class TradingEvent:
     #: window re-extracted with different confidence is the same event, and a
     #: confidence flicker must not orphan a calendar entry.
     confidence: str = "high"
+    #: The announcement's own words for this event, verified to occur in the
+    #: scraped text ("" when the model gave none or it could not be found).
+    #: Also outside event_key: a reworded quote is the same event.
+    evidence: str = ""
 
     @property
     def event_key(self) -> str:

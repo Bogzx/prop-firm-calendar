@@ -249,3 +249,13 @@ def test_a_window_announced_by_two_posts_appears_once() -> None:
     state = State(posts={"a": first, "b": second, "c": other_symbols, "d": other_firm})
     uids = set(_descriptions(render_ics(state, (), now=NOW)))
     assert uids == {"k-first", "k-other", "k-topstep"}
+
+
+def test_the_verified_quote_is_in_the_description_escaped() -> None:
+    post = _post("topstep", "k-q", "https://help.topstep.com/x")
+    post.events[0].evidence = "Thanksgiving; November 26, 11:45 CT"
+    ics = render_ics(State(posts={"a": post}), (), now=NOW)
+    assert (
+        "DESCRIPTION:“Thanksgiving\; November 26\\, 11:45 CT”\\n"
+        "Source: https://help.topstep.com/x\\nCreated by prop-firm-calendar"
+    ) in ics

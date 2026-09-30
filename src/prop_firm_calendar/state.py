@@ -22,6 +22,7 @@ class TrackedEvent:
     summary: str = ""  # display data for ICS export (v2)
     start: str = ""  # ISO 8601, timezone-aware (v2)
     event_type: str = ""  # EventType value, used for filtered feeds (v3)
+    evidence: str = ""  # verified quote from the announcement (v5)
 
 
 @dataclass
@@ -118,6 +119,7 @@ def load_state(path: Path) -> State:
                         summary=e.get("summary", ""),
                         start=e.get("start", ""),
                         event_type=e.get("event_type", ""),
+                        evidence=str(e.get("evidence") or ""),
                     )
                     for e in p.get("events", [])
                 ],

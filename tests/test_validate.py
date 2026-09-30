@@ -159,3 +159,96 @@ def test_only_a_too_far_event_is_retryable() -> None:
         ("already ended", False),
         ("end is not after start", False),
     ]
+
+
+# -- evidence spans ----------------------------------------------------------
+
+TABLE_POST = SourcePost(
+    post_key="topstep-holiday",
+    title="Topstep Holiday Trading Hours",
+    text=(
+        "2026 Holiday Schedule Holiday Date Close Positions By Reopen After "
+        "Thanksgiving Thursday, November 26 11:45 CT 17:00 CT "
+        "Christmas Day Friday, December 25 Markets closed 17:00 CT "
+    )
+    * 3,
+    url="https://help.topstep.com/en/articles/13350348",
+)
+
+
+def run_on(post: SourcePost, events, rules=None):
+    return validate_events(
+        events, post, rules or EventRules(), TZ, TZ, now=datetime(2026, 11, 1, tzinfo=UTC)
+    )
+
+
+def ts_raw(**kw) -> RawEvent:
+    return raw("2026-11-26T11:45:00", "2026-11-26T23:59:00", event_type="early_close", **kw)
+
+
+def test_a_quote_found_in_the_text_is_kept_on_the_event() -> None:
+    [event], _ = run_on(
+        TABLE_POST, [ts_raw(evidence="Thanksgiving | Thursday, November 26 | 11:45 CT")]
+    )
+    # Pipes, commas and case do not matter; every word in order does.
+    assert event.evidence == "Thanksgiving | Thursday, November 26 | 11:45 CT"
+    assert event.confidence == "high"
+    assert "Announcement: “Thanksgiving" in event.description
+
+
+def test_a_quote_not_in_the_text_publishes_the_event_as_unconfirmed() -> None:
+    [event], rejections = run_on(
+        TABLE_POST, [ts_raw(evidence="Thanksgiving: close by 10:00 CT on November 26")]
+    )
+    assert rejections == []
+    assert event.confidence == "low"
+    assert event.summary.endswith("(unconfirmed)")
+    assert event.evidence == ""  # never store words the firm did not write
+
+
+def test_a_missing_quote_changes_nothing_by_default() -> None:
+    [event], _ = run_on(TABLE_POST, [ts_raw()])
+    assert event.confidence == "high" and event.evidence == ""
+
+
+def test_require_evidence_rejects_missing_and_unfound_quotes() -> None:
+    rules = EventRules(require_evidence=True)
+    events, rejections = run_on(
+        TABLE_POST,
+        [
+            ts_raw(),
+            ts_raw(evidence="an invented sentence about November"),
+            ts_raw(evidence="Thanksgiving Thursday, November 26 11:45 CT"),
+        ],
+        rules,
+    )
+    assert len(events) == 1
+    assert [r.reason for r in rejections] == [
+        "no evidence quoted from the announcement",
+        "quoted evidence does not appear in the announcement",
+    ]
+    assert not any(r.benign or r.retryable for r in rejections)
+
+
+def test_a_too_short_quote_is_not_evidence() -> None:
+    from prop_firm_calendar.parsing.validate import evidence_supported
+
+    assert not evidence_supported("11:45 CT", TABLE_POST.text)
+    assert evidence_supported("November 26 11:45 CT", TABLE_POST.text)
+    assert not evidence_supported("November 26 11:46 CT", TABLE_POST.text)
+
+
+def test_a_post_without_text_cannot_refute_its_quote() -> None:
+    """Deferred events re-validated after their post left the index page."""
+    stub = SourcePost(post_key="topstep-holiday", title="", text="", url=TABLE_POST.url)
+    [event], _ = run_on(stub, [ts_raw(evidence="Thanksgiving Thursday, November 26 11:45 CT")])
+    assert event.evidence and event.confidence == "high"
+
+
+def test_evidence_is_cleaned_and_capped() -> None:
+    long_quote = "Thanksgiving Thursday, November 26 11:45 CT\n" + "x " * 400
+    text = TABLE_POST.text + " " + long_quote
+    post = SourcePost("p", "t", text, "u")
+    [event], _ = run_on(post, [ts_raw(evidence=long_quote)])
+    assert "\n" not in event.evidence
+    assert len(event.evidence) <= 301
