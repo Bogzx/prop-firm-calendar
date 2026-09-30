@@ -23,8 +23,14 @@ _EVIDENCE_LIMIT = 300
 _EVIDENCE_MIN_WORDS = 4
 
 
+#: Invisible characters that sit *inside* words in scraped HTML (soft hyphens
+#: from &shy;, joiners, a stray BOM). A model quoting the word drops them.
+_INVISIBLE = dict.fromkeys(map(ord, "\u00ad\u200c\u200d\u2060\ufeff"))
+
+
 def _words(text: str) -> list[str]:
-    return [w.casefold() for w in _WORD.findall(unicodedata.normalize("NFKC", text))]
+    normalized = unicodedata.normalize("NFKC", text.translate(_INVISIBLE))
+    return [w.casefold() for w in _WORD.findall(normalized)]
 
 
 def evidence_supported(quote: str, text: str) -> bool:
@@ -138,7 +144,7 @@ def validate_events(
             evidence = _clean_evidence(raw.evidence) if not problem else ""
             # A quote the announcement does not contain is the model's own
             # words presented as the firm's: publish flagged, never as certain.
-            fabricated = bool(raw.evidence) and problem is not None
+            fabricated = problem == _UNFOUND_EVIDENCE
             if fabricated:
                 logger.warning(
                     "Evidence for %s %s on %s is not in the announcement; publishing as "
@@ -192,10 +198,20 @@ def _evidence_problem(raw: RawEvent, post: SourcePost) -> str | None:
     extracted, so it is accepted as is.
     """
     if not raw.evidence or not raw.evidence.strip():
-        return "no evidence quoted from the announcement"
+        return _NO_EVIDENCE
+    if len(_words(raw.evidence)) < _EVIDENCE_MIN_WORDS:
+        # Too short to prove anything, but not a sign of invention either: the
+        # prompt asks for the shortest passage, and "Dec 25 | Closed" is a
+        # perfectly verbatim table row. Treated like no quote at all.
+        return _SHORT_EVIDENCE
     if post.text and not evidence_supported(raw.evidence, post.text):
-        return "quoted evidence does not appear in the announcement"
+        return _UNFOUND_EVIDENCE
     return None
+
+
+_NO_EVIDENCE = "no evidence quoted from the announcement"
+_SHORT_EVIDENCE = f"quoted evidence is under {_EVIDENCE_MIN_WORDS} words, too short to check"
+_UNFOUND_EVIDENCE = "quoted evidence does not appear in the announcement"
 
 
 def _clean_evidence(quote: str | None) -> str:
