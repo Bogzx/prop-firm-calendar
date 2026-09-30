@@ -18,4 +18,4 @@ def make_backend(cfg: LLMConfig) -> LLMBackend:
         return GeminiBackend(cfg.api_key)
     from prop_firm_calendar.parsing.openai_compat import OpenAICompatBackend
 
-    return OpenAICompatBackend(cfg.api_key, cfg.base_url)
+    return OpenAICompatBackend(cfg.api_key, cfg.base_url, timeout=cfg.request_timeout_sec)

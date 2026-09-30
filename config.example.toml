@@ -72,8 +72,11 @@ max_age_days = 14               # ignore posts older than this
 [llm]
 # provider "gemini" uses Google AI Studio (free tier available).
 # provider "openai-compatible" works with OpenRouter, OpenAI, Groq, Ollama, …
-# e.g. DeepSeek via OpenRouter:
+# e.g. DeepSeek directly:
 #   provider = "openai-compatible"
+#   base_url = "https://api.deepseek.com"
+#   models = ["deepseek-flash", "deepseek-v4-pro"]
+# or DeepSeek via OpenRouter:
 #   base_url = "https://openrouter.ai/api/v1"
 #   models = ["deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"]
 provider = "gemini"
@@ -81,6 +84,7 @@ base_url = ""                   # e.g. "https://openrouter.ai/api/v1" for OpenRo
 models = ["gemini-2.5-flash", "gemini-2.0-flash"]   # ordered fallback list
 consensus_runs = 3              # extract N times, keep majority — stable results even on
                                 # nondeterministic hosted APIs; 1 = single call
+request_timeout_sec = 120       # per request (openai-compatible); a hung call can't stall a sync
 # The API key comes from the LLM_API_KEY environment variable (see .env.example).
 
 [calendar]
