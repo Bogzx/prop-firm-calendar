@@ -257,7 +257,15 @@ Set `[ics] enabled = true` (forced on automatically in feed-only and serve
 modes) and every run writes `ftmo-events.ics`: stable UIDs per event, local
 times in `[calendar] timezone` with a matching `VTIMEZONE`, popup alarms
 matching `reminders_minutes`, a `REFRESH-INTERVAL` hint for subscribers, and a
-link to the event's own announcement in its description.
+link to the event's own announcement in its description. Events are marked
+free (`TRANSP:TRANSPARENT`): a firm's maintenance window is not your busy time.
+
+The writer is hand-written, so `tests/test_ics_conformance.py` reads its output
+back with an independent parser ([icalendar](https://pypi.org/project/icalendar/))
+in five zones, with events on both sides of every 2026 DST change, and resolves
+each time through the feed's own `VTIMEZONE` rather than the system's tz
+database. An instant in the hour repeated when clocks go back is written in
+UTC, since RFC 5545 reads a repeated local time as its first occurrence.
 
 `prop-firm-calendar serve` exposes it over HTTP alongside operations endpoints:
 
