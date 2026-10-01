@@ -154,6 +154,9 @@ class CaseResult:
     case: Case
     runs: list[RunScore] = field(default_factory=list)
     identity_sets: list[frozenset[Identity]] = field(default_factory=list)
+    #: With a model panel: each member's own answer, scored as if it had run
+    #: alone. Free — the ballots were already collected for the vote.
+    jurors: dict[str, list[RunScore]] = field(default_factory=dict)
 
     @property
     def stable(self) -> bool:
@@ -182,6 +185,17 @@ class CaseResult:
                 }
                 for r in self.runs
             ],
+            "jurors": {
+                name: {
+                    "passed": all(r.passed(max_missing, max_extra) for r in scores),
+                    "matched": [r.matched for r in scores],
+                    "missing": max((len(r.missing) for r in scores), default=0),
+                    "extra": max((len(r.extra) for r in scores), default=0),
+                    "offset_mismatches": max((len(r.offset_mismatches) for r in scores), default=0),
+                    "errors": sum(1 for r in scores if r.error),
+                }
+                for name, scores in self.jurors.items()
+            },
         }
 
 
@@ -244,6 +258,33 @@ class Report:
                     details.extend(f"  - {p}" for p in problems)
         if details:
             lines += ["", "### Differences", "", *details]
+        if any(result.jurors for result in self.results):
+            lines += [
+                "",
+                "### Panel members scored alone",
+                "",
+                "Each model's own answer from the same calls, before the vote. "
+                "A member that fails where the panel passes is an error the "
+                "quorum caught.",
+                "",
+                "| Firm | Fixture | Model | Matched per run | Missing | Extra | Offsets | "
+                "Errors | Alone |",
+                "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            ]
+            for result in self.results:
+                for name, scores in result.jurors.items():
+                    alone = all(r.passed(self.max_missing, self.max_extra) for r in scores)
+                    matched = ", ".join(
+                        str(r.matched) if r.error is None else "error" for r in scores
+                    )
+                    lines.append(
+                        f"| {result.case.firm} | {result.case.name} | {name} | {matched} | "
+                        f"{max((len(r.missing) for r in scores), default=0)} | "
+                        f"{max((len(r.extra) for r in scores), default=0)} | "
+                        f"{max((len(r.offset_mismatches) for r in scores), default=0)} | "
+                        f"{sum(1 for r in scores if r.error)} | "
+                        f"{'pass' if alone else 'fail'} |"
+                    )
         return "\n".join(lines) + "\n"
 
 
@@ -266,8 +307,16 @@ def evaluate(
             except Exception as e:  # noqa: BLE001 - an erroring run is a failed run, not a crash
                 result.runs.append(RunScore(0, [], [], [], [], 0, 0, error=str(e)))
                 result.identity_sets.append(frozenset())
-                continue
-            result.runs.append(score(case, got))
-            result.identity_sets.append(frozenset(_identity(e) for e in got))
+            else:
+                result.runs.append(score(case, got))
+                result.identity_sets.append(frozenset(_identity(e) for e in got))
+            # A panel keeps every member's ballot, also when too few answered
+            # for a vote: scoring them alone shows which model fails where.
+            for ballot in getattr(extractor, "last_ballots", ()):
+                result.jurors.setdefault(ballot.juror, []).append(
+                    score(case, ballot.events)
+                    if ballot.events is not None
+                    else RunScore(0, [], [], [], [], 0, 0, error=ballot.error)
+                )
         results.append(result)
     return Report(results, max(1, runs), max_missing, max_extra)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
@@ -13,7 +14,7 @@ from pydantic import ValidationError
 
 from prop_firm_calendar.config import AppConfig, EventRules
 from prop_firm_calendar.models import SourcePost, TradingEvent
-from prop_firm_calendar.parsing.llm import RawEvent
+from prop_firm_calendar.parsing.llm import Dispute, RawEvent
 from prop_firm_calendar.parsing.validate import Rejection, validate_events
 from prop_firm_calendar.sinks.base import EventSink
 from prop_firm_calendar.sinks.null import StateOnlySink, is_placeholder
@@ -155,6 +156,17 @@ def run_pipeline(
             now=now,
             require_stated_offset=require_stated_offset,
         )
+        # Only a PanelExtractor disagrees with itself; the single-model
+        # extractor has no such attribute and contributes nothing here.
+        rejections += _disputed(
+            getattr(extractor, "last_disputes", ()),
+            post,
+            config.events,
+            source_tz,
+            calendar_tz,
+            now,
+            require_stated_offset,
+        )
         deferred = [r.raw for r in rejections if r.retryable]
         rejected = _count_rejections(post, rejections, report)
 
@@ -240,6 +252,41 @@ def _count_rejections(
         logger.error("%s", message)
         report.anomalies.append(message)
         report.rejected_lines.extend(f"{post.post_key}: {line}" for line in flagged)
+    return flagged
+
+
+def _disputed(
+    disputes: Sequence[Dispute],
+    post: SourcePost,
+    rules: EventRules,
+    source_tz: ZoneInfo,
+    calendar_tz: ZoneInfo,
+    now: datetime,
+    require_stated_offset: bool,
+) -> list[Rejection]:
+    """Panel disagreements that would otherwise have reached the calendar.
+
+    An event too few models extracted is not published, but it is not
+    dropped quietly either: it may be the one window only the best reader
+    caught. Reported as a rejection, it raises the firm's anomaly, reaches
+    the notification channels and stays listed under `rejected_extractions`
+    on /healthz until the post changes. A disagreement about a window that
+    has already ended, or about a reading validation would reject anyway, is
+    not worth a human's attention and is left out.
+    """
+    flagged: list[Rejection] = []
+    for dispute in disputes:
+        _, rejections = validate_events(
+            [dispute.event],
+            post,
+            rules,
+            source_tz,
+            calendar_tz,
+            now=now,
+            require_stated_offset=require_stated_offset,
+        )
+        if all(r.retryable for r in rejections):
+            flagged.append(Rejection(dispute.event, dispute.describe()))
     return flagged
 
 

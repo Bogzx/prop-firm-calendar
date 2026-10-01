@@ -86,6 +86,34 @@ class ScrapeConfig:
     user_agent: str = ""
 
 
+PROVIDERS = ("gemini", "openai-compatible")
+
+
+@dataclass(frozen=True)
+class PanelMember:
+    """One model on the extraction panel (`[[llm.panel]]`).
+
+    `provider` and `base_url` left empty inherit `[llm]`'s, so a panel of
+    several models behind one OpenRouter key needs only `model` per entry. A
+    member naming its own provider does not inherit `[llm] base_url`: that
+    URL belongs to the other provider.
+    """
+
+    model: str
+    provider: str = ""
+    base_url: str = ""
+    #: Environment variable holding this member's API key. The key itself is
+    #: never read from TOML.
+    api_key_env: str = "LLM_API_KEY"
+    #: Label in logs, disputes and the eval report; defaults to `model`.
+    name: str = ""
+    api_key: str = ""  # resolved from api_key_env at load time
+
+    @property
+    def label(self) -> str:
+        return self.name or self.model
+
+
 @dataclass(frozen=True)
 class LLMConfig:
     provider: str = "gemini"  # "gemini" | "openai-compatible"
@@ -96,6 +124,17 @@ class LLMConfig:
     # up to 10 minutes per attempt, so one hung request stalls a whole sync.
     request_timeout_sec: float = 120.0
     api_key: str = ""  # from LLM_API_KEY / GEMINI_API_KEY env, never from TOML
+    #: Independent models that must agree (`[[llm.panel]]`). Empty — the
+    #: default — means one model with `consensus_runs` repeats; when set,
+    #: `models` and `consensus_runs` are not used.
+    panel: tuple[PanelMember, ...] = ()
+    #: How many panel members must extract an event for it to be published;
+    #: 0 means a majority of the panel.
+    panel_quorum: int = 0
+
+    @property
+    def quorum(self) -> int:
+        return self.panel_quorum or len(self.panel) // 2 + 1
 
 
 @dataclass(frozen=True)
@@ -191,13 +230,15 @@ class AppConfig:
         return p if p.is_absolute() else self.base_dir / p
 
 
-def _section(cls: type, data: dict, name: str):  # noqa: ANN202 - generic dataclass factory
+def _section(  # noqa: ANN202 - generic dataclass factory
+    cls: type, data: dict, name: str, skip: tuple[str, ...] = ()
+):
     raw = data.get(name, {})
     if not isinstance(raw, dict):
         raise ConfigError(f"[{name}] must be a TOML table")
     kwargs = {}
     for f in dataclasses.fields(cls):
-        if f.name in raw:
+        if f.name in raw and f.name not in skip:
             value = raw[f.name]
             if isinstance(value, list):
                 value = tuple(value)
@@ -259,11 +300,76 @@ def _firms_from_data(data: dict, source: SourceConfig) -> tuple[FirmConfig, ...]
     return tuple(firms)
 
 
+def _panel_from_data(llm_raw: object, llm: LLMConfig, env: Mapping[str, str]) -> LLMConfig:
+    """Parse `[[llm.panel]]`, resolving each member's key from its env variable."""
+    raw = llm_raw.get("panel") if isinstance(llm_raw, dict) else None
+    if raw is None:
+        return llm
+    if not isinstance(raw, list) or not all(isinstance(item, dict) for item in raw):
+        raise ConfigError("[[llm.panel]] must be an array of tables")
+    members: list[PanelMember] = []
+    for item in raw:
+        if "api_key" in item:
+            raise ConfigError(
+                "[[llm.panel]] entries take no api_key — secrets never go in config.toml; "
+                "name the environment variable that holds it with api_key_env"
+            )
+        if "model" not in item:
+            raise ConfigError("each [[llm.panel]] entry needs a 'model' key")
+        try:
+            member = PanelMember(**item)
+        except TypeError as e:
+            raise ConfigError(f"invalid [[llm.panel]] entry {item.get('model')!r}: {e}") from e
+        inherited = not member.provider
+        member = dataclasses.replace(
+            member,
+            provider=member.provider or llm.provider,
+            base_url=member.base_url or (llm.base_url if inherited else ""),
+            api_key=(
+                llm.api_key
+                if member.api_key_env == "LLM_API_KEY"
+                else env.get(member.api_key_env, "")
+            ),
+        )
+        members.append(member)
+    return dataclasses.replace(llm, panel=tuple(members))
+
+
+def _validate_panel(llm: LLMConfig) -> None:
+    if not llm.panel:
+        if llm.panel_quorum:
+            raise ConfigError("llm.panel_quorum is set but no [[llm.panel]] models are listed")
+        return
+    if len(llm.panel) < 2:
+        raise ConfigError(
+            "[[llm.panel]] needs at least two models to agree; for one model, "
+            "use [llm] models and consensus_runs"
+        )
+    labels = [m.label for m in llm.panel]
+    if len(set(labels)) != len(labels):
+        raise ConfigError(
+            f"[[llm.panel]] lists the same model twice ({', '.join(labels)}); give each "
+            "member a distinct name — and note that one model twice is not two opinions"
+        )
+    for member in llm.panel:
+        if member.provider not in PROVIDERS:
+            raise ConfigError(
+                f"[[llm.panel]] {member.label}: unknown provider {member.provider!r}; "
+                "use 'gemini' or 'openai-compatible'"
+            )
+    if not 1 <= llm.quorum <= len(llm.panel):
+        raise ConfigError(
+            f"llm.panel_quorum must be between 1 and {len(llm.panel)} "
+            f"(the panel size), got {llm.panel_quorum}"
+        )
+
+
 def _validate(cfg: AppConfig) -> None:
-    if cfg.llm.provider not in ("gemini", "openai-compatible"):
+    if cfg.llm.provider not in PROVIDERS:
         raise ConfigError(
             f"unknown llm provider {cfg.llm.provider!r}; use 'gemini' or 'openai-compatible'"
         )
+    _validate_panel(cfg.llm)
     if cfg.calendar.auth_mode not in ("oauth", "service_account"):
         raise ConfigError(
             f"unknown auth_mode {cfg.calendar.auth_mode!r}; use 'oauth' or 'service_account'"
@@ -318,7 +424,7 @@ def load_config(path: Path, env: Mapping[str, str] | None = None) -> AppConfig:
             raise ConfigError(f"cannot parse {path}: {e}") from e
 
     source = _section(SourceConfig, data, "source")
-    llm = _section(LLMConfig, data, "llm")
+    llm = _section(LLMConfig, data, "llm", skip=("panel",))
     calendar = _section(CalendarConfig, data, "calendar")
 
     events_raw = data.get("events", {})
@@ -343,6 +449,7 @@ def load_config(path: Path, env: Mapping[str, str] | None = None) -> AppConfig:
 
     api_key = env_map.get("LLM_API_KEY", "") or env_map.get("GEMINI_API_KEY", "")
     llm = dataclasses.replace(llm, api_key=api_key)
+    llm = _panel_from_data(data.get("llm"), llm, env_map)
 
     notify = _section(NotifyConfig, data, "notify")
     notify = dataclasses.replace(

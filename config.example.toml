@@ -86,6 +86,35 @@ consensus_runs = 3              # extract N times, keep majority — stable resu
                                 # nondeterministic hosted APIs; 1 = single call
 request_timeout_sec = 120       # per request (openai-compatible); a hung call can't stall a sync
 # The API key comes from the LLM_API_KEY environment variable (see .env.example).
+panel_quorum = 0                # with [[llm.panel]]: how many members must agree; 0 = majority
+
+# OPTIONAL — several independent models that must agree. Repeating one model
+# (consensus_runs) smooths out sampling noise but repeats that model's
+# systematic misreadings; models from different vendors misread different
+# things. Each member extracts once, an event is published only when
+# panel_quorum members extracted the same window, and a window they disagree on
+# is reported (anomaly, notification, /healthz) instead of published. With a
+# panel, models and consensus_runs above are not used. Uncomment to opt in:
+#
+# [[llm.panel]]
+# model = "deepseek-chat"
+# provider = "openai-compatible"
+# base_url = "https://api.deepseek.com"
+# api_key_env = "DEEPSEEK_API_KEY"    # the env var holding this member's key
+#
+# [[llm.panel]]
+# model = "gemini-2.5-flash"
+# provider = "gemini"
+# api_key_env = "GEMINI_API_KEY"
+#
+# [[llm.panel]]
+# model = "openai/gpt-5-mini"
+# provider = "openai-compatible"
+# base_url = "https://openrouter.ai/api/v1"
+# api_key_env = "OPENROUTER_API_KEY"
+#
+# A member that names no provider inherits [llm] provider, base_url and
+# LLM_API_KEY — handy for several models behind one OpenRouter key.
 
 [calendar]
 enabled = true                  # false = feed-only mode: serve/write an ICS feed,
