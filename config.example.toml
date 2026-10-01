@@ -105,7 +105,7 @@ panel_quorum = 0                # with [[llm.panel]]: how many members must agre
 # [[llm.panel]]
 # model = "gemini-2.5-flash"
 # provider = "gemini"
-# api_key_env = "GEMINI_API_KEY"
+# api_key_env = "GEMINI_PANEL_API_KEY"
 #
 # [[llm.panel]]
 # model = "openai/gpt-5-mini"
@@ -114,7 +114,9 @@ panel_quorum = 0                # with [[llm.panel]]: how many members must agre
 # api_key_env = "OPENROUTER_API_KEY"
 #
 # A member that names no provider inherits [llm] provider, base_url and
-# LLM_API_KEY — handy for several models behind one OpenRouter key.
+# LLM_API_KEY — handy for several models behind one OpenRouter key. A member
+# with its own provider or base_url must set api_key_env (loading fails
+# otherwise). Avoid GEMINI_API_KEY there: it is also LLM_API_KEY's legacy name.
 
 [calendar]
 enabled = true                  # false = feed-only mode: serve/write an ICS feed,

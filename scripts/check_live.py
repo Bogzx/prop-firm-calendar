@@ -28,10 +28,12 @@ its usage statistics.
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import sys
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -66,6 +68,11 @@ def fetch(url: str, timeout: float) -> tuple[int, str, bytes]:
 def _get(name: str, url: str, timeout: float) -> tuple[Result | None, int, str, bytes]:
     try:
         status, ctype, body = fetch(url, timeout)
+    except http.client.HTTPException as e:
+        # Connected, but the answer was cut short or malformed (IncompleteRead,
+        # a bad status line): a proxy or a dying process, not a network blip.
+        detail = f"{url}: {type(e).__name__}: {e}"
+        return Result(name, "bad-response", detail), 0, "", b""
     except (urllib.error.URLError, OSError) as e:
         reason = getattr(e, "reason", e)
         return Result(name, "unreachable", f"{url}: {reason}"), 0, "", b""
@@ -80,17 +87,23 @@ def check_health(base: str, timeout: float) -> Result:
         payload = json.loads(body)
     except ValueError:
         return Result("healthz", f"http-{status}", f"HTTP {status}, not JSON: {body[:120]!r}")
+    if not isinstance(payload, dict):
+        return Result(
+            "healthz", "not-json-object", f"HTTP {status}, not a JSON object: {body[:120]!r}"
+        )
     if status == 200 and payload.get("ok") is True:
         age = payload.get("last_success_age_seconds")
         when = f"{age / 3600:.1f} h ago" if isinstance(age, (int, float)) else "unknown"
         return Result("healthz", "ok", f"last successful sync {when}")
     verdict = str(payload.get("status") or f"http-{status}")
     parts = [f"HTTP {status}, status {verdict!r}"]
-    if payload.get("unhealthy_sources"):
-        parts.append("unhealthy: " + ", ".join(map(str, payload["unhealthy_sources"])))
+    unhealthy = payload.get("unhealthy_sources")
+    if isinstance(unhealthy, list) and unhealthy:
+        parts.append("unhealthy: " + ", ".join(map(str, unhealthy)))
     if payload.get("last_error"):
         parts.append(f"last error: {str(payload['last_error'])[:300]}")
-    for anomaly in (payload.get("anomalies") or [])[:3]:
+    anomalies = payload.get("anomalies")
+    for anomaly in anomalies[:3] if isinstance(anomalies, list) else ():
         parts.append(f"anomaly: {str(anomaly)[:300]}")
     return Result("healthz", verdict, "; ".join(parts))
 
@@ -210,10 +223,14 @@ def check_api(base: str, timeout: float) -> Result:
     if status != 200:
         return Result("api", f"http-{status}", f"/api/v1/next answered HTTP {status}")
     try:
-        firms = json.loads(body).get("firms")
-    except (ValueError, AttributeError):
+        payload = json.loads(body)
+    except ValueError:
+        payload = None
+    if not isinstance(payload, dict):
         return Result("api", "not-json", f"/api/v1/next is not a JSON object: {body[:120]!r}")
-    if not isinstance(firms, list) or not firms or not all("firm" in f for f in firms):
+    firms = payload.get("firms")
+    rows = isinstance(firms, list) and firms
+    if not rows or not all(isinstance(f, dict) and isinstance(f.get("firm"), str) for f in firms):
         return Result("api", "shape", "/api/v1/next has no per-firm rows")
     return Result("api", "ok", f"{len(firms)} firm(s): {', '.join(f['firm'] for f in firms)}")
 
@@ -237,12 +254,24 @@ def report(base: str, results: list[Result]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _guarded(name: str, check: Callable[[], Result]) -> Result:
+    """A check that crashes is a failed check, never a missing report.
+
+    The workflow reads the report to open the alert issue; an exception here
+    would leave none, and the outage would go unreported.
+    """
+    try:
+        return check()
+    except Exception as e:  # noqa: BLE001 - any crash is the finding
+        return Result(name, "crashed", f"the check itself failed: {type(e).__name__}: {e}")
+
+
 def run(base: str, *, timeout: float = 20.0, min_events: int = 1) -> list[Result]:
     base = base.rstrip("/")
     return [
-        check_health(base, timeout),
-        check_feed(base, timeout, min_events),
-        check_api(base, timeout),
+        _guarded("healthz", lambda: check_health(base, timeout)),
+        _guarded("feed", lambda: check_feed(base, timeout, min_events)),
+        _guarded("api", lambda: check_api(base, timeout)),
     ]
 
 

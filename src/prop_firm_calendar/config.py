@@ -96,15 +96,17 @@ class PanelMember:
     `provider` and `base_url` left empty inherit `[llm]`'s, so a panel of
     several models behind one OpenRouter key needs only `model` per entry. A
     member naming its own provider does not inherit `[llm] base_url`: that
-    URL belongs to the other provider.
+    URL belongs to the other provider. Nor may it silently inherit
+    `LLM_API_KEY`: a member whose endpoint differs from `[llm]`'s must name
+    its key's variable (see _validate_panel).
     """
 
     model: str
     provider: str = ""
     base_url: str = ""
-    #: Environment variable holding this member's API key. The key itself is
-    #: never read from TOML.
-    api_key_env: str = "LLM_API_KEY"
+    #: Environment variable holding this member's API key; empty means the
+    #: `[llm]` key (LLM_API_KEY). The key itself is never read from TOML.
+    api_key_env: str = ""
     #: Label in logs, disputes and the eval report; defaults to `model`.
     name: str = ""
     api_key: str = ""  # resolved from api_key_env at load time
@@ -327,7 +329,7 @@ def _panel_from_data(llm_raw: object, llm: LLMConfig, env: Mapping[str, str]) ->
             base_url=member.base_url or (llm.base_url if inherited else ""),
             api_key=(
                 llm.api_key
-                if member.api_key_env == "LLM_API_KEY"
+                if member.api_key_env in ("", "LLM_API_KEY")
                 else env.get(member.api_key_env, "")
             ),
         )
@@ -356,6 +358,18 @@ def _validate_panel(llm: LLMConfig) -> None:
             raise ConfigError(
                 f"[[llm.panel]] {member.label}: unknown provider {member.provider!r}; "
                 "use 'gemini' or 'openai-compatible'"
+            )
+        # Without this, a member pointed at another vendor quietly receives the
+        # [llm] provider's key, every call is refused, and it abstains forever:
+        # a panel of three that is really a panel of two, with nothing said.
+        if (member.provider, member.base_url) != (llm.provider, llm.base_url) and not (
+            member.api_key_env
+        ):
+            raise ConfigError(
+                f"[[llm.panel]] {member.label}: it names its own provider or base_url, so "
+                "the [llm] key (LLM_API_KEY) belongs to someone else — set api_key_env to "
+                "the variable holding this provider's key "
+                '(or api_key_env = "LLM_API_KEY" if that key really works there)'
             )
     if not 1 <= llm.quorum <= len(llm.panel):
         raise ConfigError(

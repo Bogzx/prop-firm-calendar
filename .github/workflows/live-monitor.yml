@@ -51,6 +51,13 @@ jobs:
         run: |
           status=0
           python scripts/check_live.py "$MONITOR_URL" --report report.md || status=$?
+          if [ ! -s report.md ]; then
+            # The checker died before writing its report (interpreter error,
+            # killed): still report an outage rather than fail silently.
+            printf '## Live check: FAIL — %s\n\nThe checker exited %s without a report; see the run log.\n\n<!-- signature: checker=crashed -->\n' \
+              "$MONITOR_URL" "$status" > report.md
+            [ "$status" -ne 0 ] || status=1
+          fi
           cat report.md >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
       - name: Report the outage on an issue

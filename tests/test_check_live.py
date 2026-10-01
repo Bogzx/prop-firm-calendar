@@ -12,7 +12,7 @@ import threading
 import urllib.request
 from collections.abc import Iterator
 from datetime import UTC, datetime
-from http.server import ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -156,3 +156,77 @@ def test_the_monitor_is_not_counted_as_a_subscriber(instance) -> None:
     with urllib.request.urlopen(request, timeout=5) as response:
         response.read()
     assert stats.snapshot()["today"]["feed_hits"] == 1
+
+
+# -- answers that are not answers --------------------------------------------
+
+
+class Canned(BaseHTTPRequestHandler):
+    """Serves `self.server.replies[path]`: (status, body, declared length or None)."""
+
+    def do_GET(self) -> None:  # noqa: N802 - stdlib naming
+        status, body, length = self.server.replies[self.path]  # type: ignore[attr-defined]
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body) if length is None else length))
+        self.end_headers()
+        self.wfile.write(body)
+        self.close_connection = True  # a short body then EOF: IncompleteRead
+
+    def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+        pass
+
+
+@pytest.fixture
+def canned() -> Iterator[tuple[str, dict]]:
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Canned)
+    httpd.replies = {}  # type: ignore[attr-defined]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}", httpd.replies  # type: ignore[attr-defined]
+    httpd.shutdown()
+    httpd.server_close()
+
+
+def test_a_truncated_answer_is_a_failed_check_with_a_report(canned, tmp_path: Path) -> None:
+    """An IncompleteRead used to escape as a traceback: no report, so no issue."""
+    base, replies = canned
+    for path in ("/healthz", "/feed.ics", "/api/v1/next"):
+        replies[path] = (200, b'{"ok": tr', 1000)
+    report = tmp_path / "report.md"
+    assert check_live.main([base, "--report", str(report)]) == 1
+    text = report.read_text(encoding="utf-8")
+    assert "healthz=bad-response feed=bad-response api=bad-response" in text
+    assert "IncompleteRead" in text
+
+
+@pytest.mark.parametrize("body", [b"[]", b'"ok"', b"null", b"42"])
+def test_healthz_json_that_is_not_an_object_is_a_failure(canned, body: bytes) -> None:
+    base, replies = canned
+    replies["/healthz"] = (200, body, None)
+    assert check_live.check_health(base, 5).code == "not-json-object"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [b"[]", b'{"firms": ["ftmo"]}', b'{"firms": [{"firm": 1}]}', b'{"firms": "ftmo"}'],
+)
+def test_api_answers_of_the_wrong_shape_are_failures(canned, body: bytes) -> None:
+    base, replies = canned
+    replies["/api/v1/next"] = (200, body, None)
+    assert check_live.check_api(base, 5).code in {"not-json", "shape"}
+
+
+def test_a_crashing_check_still_leaves_a_report(
+    instance, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, status, _, _ = instance
+    status.record_success(now=NOW)
+
+    def explode(*args: object) -> None:
+        raise KeyError("surprise")
+
+    monkeypatch.setattr(check_live, "check_feed", explode)
+    report = tmp_path / "report.md"
+    assert check_live.main([base, "--report", str(report)]) == 1
+    text = report.read_text(encoding="utf-8")
+    assert "healthz=ok feed=crashed api=ok" in text and "KeyError" in text
