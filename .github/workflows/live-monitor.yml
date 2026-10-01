@@ -1,0 +1,88 @@
+name: Live monitor
+
+# Checks the public instance from outside every 30 minutes, as a subscriber
+# would: /healthz is ok, /feed.ics is a well-formed calendar, /api/v1/next
+# answers (scripts/check_live.py). A failure opens one issue labelled
+# `live-feed-down` (and comments on it only when what is wrong changes); the
+# first passing run closes it. Issue notifications are the alert.
+#
+# Not a replacement for an uptime monitor on /healthz: GitHub delays
+# scheduled runs under load and disables them after 60 days without repository
+# activity (re-enable under Actions). Read-only GETs; the server leaves the
+# monitor's User-Agent out of its usage statistics.
+#
+# Optional repository variable: vars.MONITOR_URL (default: the public instance).
+
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/check_live.py
+      - .github/workflows/live-monitor.yml
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: live-monitor
+  cancel-in-progress: false
+
+env:
+  MONITOR_URL: ${{ vars.MONITOR_URL || 'https://calendar.bogdantruta.com' }}
+  LABEL: live-feed-down
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the independent ICS parser
+        run: pip install --quiet "icalendar==7.3.0"
+      - name: Check the live instance
+        id: check
+        continue-on-error: true
+        run: |
+          status=0
+          python scripts/check_live.py "$MONITOR_URL" --report report.md || status=$?
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - name: Report the outage on an issue
+        if: steps.check.outcome == 'failure' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          printf '\n[Run](%s)\n' "$RUN_URL" >> report.md
+          signature=$(grep -o 'signature: [^>]*' report.md | head -1)
+          number=$(gh issue list --label "$LABEL" --state open --json number --jq '.[0].number // empty')
+          if [ -z "$number" ]; then
+            gh label create "$LABEL" --color B60205 \
+              --description "The public instance failed its scheduled check" 2>/dev/null || true
+            gh issue create --label "$LABEL" \
+              --title "Live instance check failing: $MONITOR_URL" --body-file report.md
+          else
+            last=$(gh issue view "$number" --json body,comments \
+              --jq '([.body] + [.comments[].body]) | last')
+            if ! printf '%s' "$last" | grep -qF "$signature"; then
+              gh issue comment "$number" --body-file report.md
+            fi
+          fi
+      - name: Close the issue on recovery
+        if: steps.check.outcome == 'success' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          for number in $(gh issue list --label "$LABEL" --state open --json number --jq '.[].number'); do
+            gh issue close "$number" --comment "Recovered: every check passes again ([run]($RUN_URL))."
+          done
+      - name: Fail the run when the check failed
+        if: steps.check.outcome == 'failure'
+        run: exit 1
