@@ -25,7 +25,7 @@ per-event-type filters on the live page.](https://calendar.bogdantruta.com))
 prop-firm-calendar watches the announcement pages of **FTMO, Topstep, Blueberry
 Funded and E8 Markets**, extracts scheduled platform maintenance, market closures and
 early closes with an LLM, and publishes them as a subscribable ICS feed (and,
-optionally, a Google Calendar) — **including updating or removing events when a firm
+optionally, a Google Calendar) — **including replacing or removing events when a firm
 reschedules an announcement**. Events come with popup reminders, so you get warned
 *before* the platform goes down, not after.
 
@@ -123,7 +123,7 @@ flowchart LR
     S[Firm announcement pages<br>FTMO · Topstep · Blueberry Funded · E8 Markets<br>one TOML profile each] -->|polite fetch<br>robots.txt, rate limit| H[Content-hash cache]
     H -->|new or changed posts only| X[LLM extraction<br>temperature 0, JSON schema,<br>voted across runs]
     X --> V[Validation<br>times, offsets, durations,<br>quoted evidence checked]
-    V --> R[Reconcile per post<br>create / update / keep<br>refuses to delete on doubt]
+    V --> R[Reconcile per post<br>create new, delete stale, keep the rest<br>refuses to delete on doubt]
     R --> F[ICS feed<br>per firm, per event type]
     R --> A[Read-only JSON API]
     R --> G[(Google Calendar<br>optional)]
@@ -230,7 +230,7 @@ api_key_env = "DEEPSEEK_API_KEY"      # keys stay in .env; this names the variab
 [[llm.panel]]
 model = "gemini-2.5-flash"
 provider = "gemini"
-api_key_env = "GEMINI_API_KEY"
+api_key_env = "GEMINI_PANEL_API_KEY"
 
 [[llm.panel]]
 model = "openai/gpt-5-mini"
@@ -241,6 +241,11 @@ api_key_env = "OPENROUTER_API_KEY"
 
 A member that names no `provider` inherits `[llm]`'s provider, `base_url` and
 `LLM_API_KEY`, so several models behind one OpenRouter key need only `model`.
+A member that names its own provider or `base_url` must also name its key's
+variable with `api_key_env`; loading the config fails otherwise, so one
+vendor's key is never sent to another. Don't use `GEMINI_API_KEY` for a
+member: it is also the legacy name for `LLM_API_KEY`, which every member
+without its own `api_key_env` would then receive.
 
 - **A window the panel disagrees on is not published, and not dropped
   quietly either.** If it has not ended, it is reported like any other

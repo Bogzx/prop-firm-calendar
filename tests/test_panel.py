@@ -465,3 +465,33 @@ def test_the_eval_command_runs_a_configured_panel(
     assert "| ftmo | trading-update-21-may-2026 | sloppy-model | 7 | 1 | 0 | 0 | 0 | fail |" in (
         markdown
     )
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        'model = "g"\nprovider = "gemini"\n',  # another vendor
+        'model = "o"\nbase_url = "https://api.openai.com/v1"\n',  # another endpoint
+        'model = "o"\nprovider = "openai-compatible"\n',  # own provider: [llm] URL not inherited
+    ],
+)
+def test_a_member_with_its_own_endpoint_must_name_its_key(tmp_path: Path, member: str) -> None:
+    """Otherwise it silently gets [llm]'s key, every call is refused, and it abstains."""
+    body = (
+        '[llm]\nprovider = "openai-compatible"\nbase_url = "https://openrouter.ai/api/v1"\n'
+        f'[[llm.panel]]\nmodel = "a"\n[[llm.panel]]\n{member}'
+    )
+    with pytest.raises(ConfigError, match="set api_key_env"):
+        load_config(write(tmp_path, body), env={"LLM_API_KEY": "k"})
+
+
+def test_sharing_the_llm_key_on_purpose_is_allowed(tmp_path: Path) -> None:
+    body = (
+        '[llm]\nprovider = "openai-compatible"\nbase_url = "https://openrouter.ai/api/v1"\n'
+        '[[llm.panel]]\nmodel = "a"\n'
+        '[[llm.panel]]\nmodel = "b"\nbase_url = "https://openrouter.ai/api/v1/"\n'
+        'api_key_env = "LLM_API_KEY"\n'
+    )
+    first, second = load_config(write(tmp_path, body), env={"LLM_API_KEY": "k"}).llm.panel
+    assert (first.api_key, second.api_key) == ("k", "k")
+    assert first.api_key_env == ""  # inherited, so no variable of its own to name
