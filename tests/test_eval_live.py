@@ -29,19 +29,13 @@ FIXTURES = Path(__file__).parent / "fixtures"
 def test_the_configured_model_reproduces_every_golden_fixture(tmp_path: Path) -> None:
     from prop_firm_calendar.config import load_config
     from prop_firm_calendar.evaluation import discover, evaluate
-    from prop_firm_calendar.parsing.factory import make_backend
-    from prop_firm_calendar.parsing.llm import EventExtractor
+    from prop_firm_calendar.parsing.factory import make_extractor_factory
 
     config = load_config(Path(os.environ.get("PFC_EVAL_CONFIG", tmp_path / "none.toml")))
-    backend = make_backend(config.llm)
+    extractor_for = make_extractor_factory(config.llm)  # a [[llm.panel]] is evaluated too
     report = evaluate(
         discover(FIXTURES),
-        lambda profile: EventExtractor(
-            backend,
-            config.llm.models,
-            consensus_runs=config.llm.consensus_runs,
-            prompt_hints=profile.prompt_hints,
-        ),
+        lambda profile: extractor_for(profile.prompt_hints),
         runs=int(os.environ.get("PFC_EVAL_RUNS", "3")),
     )
     assert report.passed, report.to_markdown()

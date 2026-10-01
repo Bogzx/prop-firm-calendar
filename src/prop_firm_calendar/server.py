@@ -139,6 +139,9 @@ class ServerStatus:
     runs_failed: int = 0
     anomalies: tuple[str, ...] = ()
     firms: dict[str, FirmStatus] = field(default_factory=dict)
+    #: How events are extracted (parsing.factory.describe_extraction): which
+    #: models, and how many must agree. Static for the life of the process.
+    extraction: dict | None = None
     clock: Callable[[], datetime] = _utcnow
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -250,6 +253,7 @@ class ServerStatus:
                 "anomalies": list(self.anomalies),
                 "runs_ok": self.runs_ok,
                 "runs_failed": self.runs_failed,
+                "extraction": self.extraction,
             }
 
 
@@ -639,12 +643,14 @@ def serve_forever(
     valid_firms: Sequence[str] | None = None,
     firm_titles: Mapping[str, str] | None = None,
     firm_urls: Mapping[str, str] | None = None,
+    extraction: dict | None = None,
 ) -> int:
     check_writable(state_path.parent)
     status = ServerStatus(
         started_at=datetime.now(UTC).isoformat(),
         interval_seconds=interval_seconds,
         source=source_name,
+        extraction=extraction,
     )
     stop = threading.Event()
     loop_thread = threading.Thread(
