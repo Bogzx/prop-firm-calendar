@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.10.0 — 2026-10-01
+
+Four pull requests (#8–#11) and this version bump. **Upgrading needs no
+config, env or systemd change**: everything new is either opt-in or additive.
+
+### Added
+- **Model panel** (`[[llm.panel]]`, opt-in, #8). Several independent models
+  (any mix of providers, each with its own key variable) extract every changed
+  post once each; an event is published only when `panel_quorum` of them (a
+  majority by default) extracted the same window. A failed model abstains and
+  counts against every event, and with fewer answers than the quorum the sync
+  fails rather than reporting an empty announcement. A window too few models
+  saw is not published but is reported like a rejected extraction (anomaly,
+  notification, `rejected_extractions` on `/healthz`). Without a panel the
+  single-model extractor is unchanged (same prompt, same voting)
+- **`/healthz` `extraction`** (#8): which models extract events and how many
+  must agree, or the single-model consensus. `prop-firm-calendar eval` also
+  scores each panel member alone, from the same calls
+- **Live monitor** (#10): `scripts/check_live.py` checks an instance from
+  outside the way a subscriber's app would (healthz ok, a well-formed feed
+  with events, the API answering). `.github/workflows/live-monitor.yml` runs
+  it against the public instance every 30 minutes and opens, updates and
+  closes a `live-feed-down` issue. The server leaves the monitor's
+  User-Agent out of its usage statistics
+- **`schedule_note`** in source profiles (#11), shown per source on
+  `/healthz` and, while the firm has nothing upcoming, on the status page.
+  Blueberry Funded's explains why its calendar can be empty
+- **Independent ICS conformance tests** (#9): the feed is read back with
+  icalendar in five zones across every 2026 DST change, each time resolved
+  through the feed's own `VTIMEZONE`
+
+### Fixed
+- **The hour repeated when clocks go back** (#9). An instant in its second
+  pass was written as TZID-local time, which RFC 5545 reads as the first
+  pass: a London-zone window ending 01:30 GMT on 25 Oct ended an hour early.
+  Such instants are now written in UTC. The public instance (fixed GMT+3)
+  was not affected
+- **Topstep titles name the holiday** (#11), e.g. "⏳ Early Close —
+  Thanksgiving" instead of 13 identical "⏳ Early Close" entries. Applies to
+  rows extracted after Topstep next edits its article
+- `tests/test_autodeploy.py` runs on git < 2.28 (the production host has
+  2.25) (#9)
+
+### Changed
+- Every feed event is `TRANSP:TRANSPARENT` (#9): a firm's maintenance window
+  is not the subscriber's busy time. UIDs are unchanged
+- README: the pipeline diagram shows the real system, a subscriber FAQ, and a
+  JSON API example taken from the public instance (#11)
+
 ## 0.9.0 — 2026-09-30
 
 First version string since 0.8.1. It covers the two sections below it, which
