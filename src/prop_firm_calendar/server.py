@@ -357,6 +357,11 @@ class FeedSelection:
         return self.types is None and self.firms is None
 
 
+#: Product token of scripts/check_live.py's User-Agent; its requests are not
+#: counted in the usage statistics.
+MONITOR_AGENT = "prop-firm-calendar-monitor/"
+
+
 def make_handler(
     ics_path: Path,
     state_path: Path,
@@ -457,6 +462,15 @@ def make_handler(
             jar.load(self.headers.get("Cookie", ""))
             morsel = jar.get(name)
             return morsel.value if morsel else ""
+
+        def _is_monitor(self) -> bool:
+            """Our own uptime check (scripts/check_live.py), which is not a subscriber.
+
+            Behind the reverse proxy every request comes from one address, so
+            a "feed client" is in effect a User-Agent; a check every 30
+            minutes would otherwise outnumber the real feed pulls.
+            """
+            return MONITOR_AGENT in self.headers.get("User-Agent", "")
 
         def _client_hash(self) -> str:
             raw = f"{self.client_address[0]}|{self.headers.get('User-Agent', '')}"
@@ -566,7 +580,7 @@ def make_handler(
                 else:
                     self._json(200, stats.snapshot())
             elif path == "/feed.ics":
-                if stats is not None:
+                if stats is not None and not self._is_monitor():
                     stats.record_feed_hit(self._client_hash())
                 self._serve_feed()
             elif path in ("/", "/status"):
