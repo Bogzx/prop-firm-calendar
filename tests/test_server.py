@@ -108,6 +108,15 @@ def test_healthz(server) -> None:
     assert payload["last_run"] == NOW.isoformat()
 
 
+def test_healthz_says_how_events_are_extracted(server) -> None:
+    """Which models, and how many must agree: checkable from outside, not just claimed."""
+    base, status, _, _ = server
+    assert json.loads(get(f"{base}/healthz")[2])["extraction"] is None
+    status.extraction = {"mode": "panel", "models": ["a", "b", "c"], "quorum": 2}
+    status.record_success(now=NOW)
+    assert json.loads(get(f"{base}/healthz")[2])["extraction"]["quorum"] == 2
+
+
 def test_healthz_reports_failure(server) -> None:
     base, status, _, _ = server
     status.record_failure(RuntimeError("boom"), now=NOW)
