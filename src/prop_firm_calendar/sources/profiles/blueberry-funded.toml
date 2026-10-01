@@ -50,6 +50,13 @@ timezone = "Europe/London"
 
 keywords = ["maintenance", "crypto", "paused", "pricing"]
 
+schedule_note = """
+Blueberry Funded lists dated crypto maintenance windows only from time to time.
+Between those lists its page states a rule instead (every second Saturday,
+09:00–10:00 UK time), which this calendar does not turn into dates. Check their
+page for windows not shown here.
+"""
+
 prompt_hints = """
 This firm publishes recurring scheduled maintenance for crypto pricing.
 

@@ -86,6 +86,11 @@ class SourceProfile:
     #: Free text appended to the extraction prompt: house vocabulary, symbol
     #: naming, quirks the model should know about this firm specifically.
     prompt_hints: str = ""
+    #: One or two sentences for subscribers about what this firm publishes
+    #: and what the calendar deliberately leaves out. Shown on /healthz and,
+    #: while the firm has nothing upcoming, on the status page — so an empty
+    #: calendar reads as "nothing dated is announced", not as "broken".
+    schedule_note: str = ""
     #: Notes for maintainers; ignored at runtime.
     notes: str = field(default="", repr=False)
 

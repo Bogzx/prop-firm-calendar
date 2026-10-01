@@ -195,3 +195,14 @@ def test_stale_rows_do_not_leak_into_the_feed() -> None:
         "2027-01-01",
     }
     assert all(r.reason == "already ended" for r in rejections)
+
+
+def test_every_title_names_its_holiday() -> None:
+    """The table lists no symbols, so without the holiday name every entry read
+    "⏳ Early Close" — 13 identical titles a subscriber had to open to tell apart."""
+    assert 'set "affected" to the row\'s name from the Holiday' in PROFILE.prompt_hints
+    events, _ = validate_events(RAW_EVENTS, POST, RULES, CT, CALENDAR_TZ, now=NOW)
+    titles = [e.summary for e in events]
+    assert "⏳ Early Close — Thanksgiving" in titles
+    assert "🏖️ Closed All Day — Christmas Day" in titles
+    assert len(set(titles)) == len(titles) - 1  # New Year's Day appears in 2026 and 2027
