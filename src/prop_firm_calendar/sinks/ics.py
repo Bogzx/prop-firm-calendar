@@ -260,8 +260,14 @@ def render_ics(
     lines += vtimezone
 
     def stamp(prop: str, dt: datetime) -> str:
-        if vtimezone:
-            return f"{prop};TZID={tz.key}:{dt.astimezone(tz).strftime('%Y%m%dT%H%M%S')}"
+        local = dt.astimezone(tz)
+        # RFC 5545 §3.3.5: a local time that occurs twice (the hour repeated
+        # when clocks go back) means its *first* occurrence. An instant in the
+        # second pass cannot be written as TZID-local time at all — readers
+        # would put it an hour early — so it goes out in UTC instead.
+        repeated = local.fold == 1 and local.replace(fold=0).utcoffset() != local.utcoffset()
+        if vtimezone and not repeated:
+            return f"{prop};TZID={tz.key}:{local.strftime('%Y%m%dT%H%M%S')}"
         return f"{prop}:{dt.astimezone(UTC).strftime('%Y%m%dT%H%M%SZ')}"
 
     for event, start_dt, end_dt, link in selected:
@@ -274,6 +280,10 @@ def render_ics(
             f"DTSTAMP:{dtstamp}",
             stamp("DTSTART", start_dt),
             stamp("DTEND", end_dt),
+            # A firm's maintenance window is not the subscriber's busy time:
+            # without this, clients that count a calendar toward free/busy
+            # would show a trader unavailable through every all-day closure.
+            "TRANSP:TRANSPARENT",
             f"SUMMARY:{_escape(event.summary)}",
         ]
         if link or event.evidence:

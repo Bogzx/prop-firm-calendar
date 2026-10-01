@@ -39,7 +39,9 @@ ftmo-calendar = "prop_firm_calendar.cli:entry"
 # release turns a contributor's green build red on a branch they never touched
 # — which is precisely what ruff 0.16 did here by starting to format fenced
 # code blocks inside Markdown. Bump these deliberately, with the lock file.
-dev = ["pytest>=8", "ruff==0.15.16", "mypy==2.1.0", "types-requests"]
+# icalendar is a test-only, independent RFC 5545 parser: the feed writer is
+# hand-written, so conformance is checked by someone else's reader.
+dev = ["pytest>=8", "ruff==0.15.16", "mypy==2.1.0", "types-requests", "icalendar>=6"]
 
 [tool.hatch.build.targets.wheel]
 # ftmo_calendar is the deprecated import name: an alias package that resolves
