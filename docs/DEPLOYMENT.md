@@ -250,6 +250,7 @@ URL works unchanged: GitHub redirects both git and the API.
 | Update to a new release | automatic (section 6), or `git pull && sudo docker compose up -d --build` |
 | Restart | `sudo docker compose restart` |
 | Health from outside | point UptimeRobot (or similar) at `/healthz` |
+| Check it like a subscriber | `python scripts/check_live.py https://calendar.example.com` |
 
 `/healthz` answers "is this feed trustworthy right now?", not "is the process
 up". It returns **503** when the last sync raised, when no successful sync has
@@ -298,6 +299,39 @@ status code, because averaged into an overall green it stays unnoticed until
 someone gets caught by an outage. One firm failing does not stop the others
 syncing — the feed keeps updating for every healthy source while the monitor
 tells you which one needs attention.
+
+### Checking from outside, on a schedule
+
+`/healthz` can only report what the process knows. A dead host, an expired
+certificate, a proxy answering 502, or a feed that a calendar app cannot
+parse all need someone outside to look. `scripts/check_live.py` (standard
+library; uses `icalendar` too if installed) does what a subscriber's app
+does:
+
+- `/healthz` must be 200 and `ok`.
+- `/feed.ics` must be a well-formed calendar:
+  - CRLF line endings, folded at 75 octets on character boundaries;
+  - balanced components;
+  - `UID`, `DTSTAMP` and `DTSTART` on every event, and unique UIDs;
+  - every `TZID` defined;
+  - at least one event.
+- `/api/v1/next` must answer with a row per firm.
+
+It exits 1 on any failure and can write a Markdown report (`--report`).
+
+`.github/workflows/live-monitor.yml` runs it against the public instance every
+30 minutes (set the `MONITOR_URL` repository variable to point a fork at its
+own). A failure opens one issue labelled `live-feed-down`, which notifies
+repository watchers. It comments on that issue only when *what* is failing
+changes, and closes it on the first passing run. Two caveats:
+
+- GitHub delays scheduled runs under load and disables them after 60 days
+  without repository activity, so keep a real uptime monitor on `/healthz` as
+  the pager.
+- The checker identifies itself (`prop-firm-calendar-monitor/1.0`), and the
+  server leaves that User-Agent out of its usage statistics. Behind a reverse
+  proxy every request comes from one address, so a check every 30 minutes
+  would otherwise count as most of the feed's traffic.
 
 Everything stateful lives in `./data` (`state.json`, `stats.json`, the feed)
 and in `.env` — back those up and the deployment is fully reproducible.
