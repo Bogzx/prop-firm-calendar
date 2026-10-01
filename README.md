@@ -72,7 +72,12 @@ notification (see below).
 `/healthz` is built for an uptime monitor: it returns **503**, not 200, when the
 last sync failed, when no successful sync has landed within twice the sync
 interval, or when a run finished but produced a suspicious result. Point
-UptimeRobot at it and a silently frozen calendar pages you.
+UptimeRobot at it and a silently frozen calendar pages you. For the failures
+the process cannot see itself (host down, proxy errors, a feed apps cannot
+parse), `scripts/check_live.py` checks an instance from outside the way a
+subscriber's app would; the public instance runs it every 30 minutes from
+GitHub Actions and opens an issue when it fails
+([details](docs/DEPLOYMENT.md#checking-from-outside-on-a-schedule)).
 
 ![The hosted landing page — live countdown, one-click subscribe](docs/assets/landing-desktop.png)
 
