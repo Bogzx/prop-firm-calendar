@@ -280,3 +280,25 @@ def test_long_lines_are_folded_at_75_octets_without_splitting_characters() -> No
     logical = unfold(ics)
     assert "SUMMARY:🏖️ Closed All Day — " + "Équités ✓ " * 11 + "Équités ✓" in logical
     assert "Source: https://help.topstep.com/" + "a" * 60 in logical
+
+
+def test_the_second_pass_of_a_repeated_hour_is_written_in_utc() -> None:
+    """Clocks going back repeat 01:00-02:00 in London; TZID-local 01:30 means the first.
+
+    RFC 5545 §3.3.5 resolves a repeated local time to its first occurrence, so
+    the second one is only expressible in UTC. Before this, a window ending at
+    01:30 GMT on 25 Oct came out ending at 01:30 BST, an hour early.
+    """
+    first, second = "2026-10-25T00:30:00+00:00", "2026-10-25T01:30:00+00:00"
+    state = State(
+        posts={
+            "p": PostState(
+                content_hash="h",
+                last_seen=NOW.isoformat(),
+                events=[TrackedEvent("k", "g", second, "Maintenance", first, "maintenance")],
+            )
+        }
+    )
+    ics = render_ics(state, (), tz_name="Europe/London", now=NOW)
+    assert "DTSTART;TZID=Europe/London:20261025T013000" in ics  # 01:30 BST, the first
+    assert "DTEND:20261025T013000Z" in ics  # 01:30 GMT, the second

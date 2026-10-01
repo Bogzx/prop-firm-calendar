@@ -138,7 +138,10 @@ def deploy(tmp_path: Path):
     (work / "scripts").mkdir(parents=True)
     for name in ("autodeploy.sh", "ci_gate.py"):
         shutil.copy2(SCRIPTS / name, work / "scripts" / name)
-    git(tmp_path, "init", "-q", "-b", "main", str(work))
+    # Not `init -b main`: that needs git 2.28, and the production host's git
+    # (2.25) runs this script. symbolic-ref names the branch on any git.
+    git(tmp_path, "init", "-q", str(work))
+    git(work, "symbolic-ref", "HEAD", "refs/heads/main")
     git(work, "add", ".")
     git(work, "commit", "-q", "-m", "one")
     origin = tmp_path / "origin.git"

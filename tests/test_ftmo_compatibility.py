@@ -60,17 +60,20 @@ BASE_POST_KEY = "trading-update-2026-05-21"
 BASE_CONTENT_HASH = "ff8a9aa853546e3d1a5e765342dfadb8b737b66e1720e681f436c625fd9f8ffa"
 BASE_ICS_SHA256 = "7e5402e7b1b8a7509a1a91e567e2fa22c8f1dcf0b9bf565e4d0152a149841485"
 
-# 0.9.0 changed the bytes in exactly two ways, neither of them identity (apps
+# The bytes have changed since in three ways, none of them identity (apps
 # match events on UID, which is untouched):
-# - the rename moved two strings, the PRODID and the "Created by" credit;
-# - lines over 75 octets are now folded (RFC 5545 §3.1), which every reader
-#   undoes before parsing.
-# Unfolding and undoing those two substitutions reproduces BASE_ICS_SHA256
-# exactly (asserted below), so nothing else in the feed moved.
-CURRENT_ICS_SHA256 = "9d0f38f2e0925c0520b8417e99c3ba6b66284c846f43a981a1910ee16431e480"
+# - 0.9.0's rename moved two strings, the PRODID and the "Created by" credit;
+# - 0.9.0 folds lines over 75 octets (RFC 5545 §3.1), which every reader
+#   undoes before parsing;
+# - each event is now TRANSP:TRANSPARENT, so a firm's maintenance window does
+#   not mark the subscriber busy.
+# Unfolding and undoing those three reproduces BASE_ICS_SHA256 exactly
+# (asserted below), so nothing else in the feed moved.
+CURRENT_ICS_SHA256 = "cf7edc50543f3458449236a73fa899db026cfb20e2b22f58f8db4ba6711299f7"
 RENAMED = (
     ("PRODID:-//Bogzx//prop-firm-calendar//EN", "PRODID:-//AutoFtmoCalendar//ftmo-calendar//EN"),
     ("Created by prop-firm-calendar", "Created by AutoFtmoCalendar"),
+    ("TRANSP:TRANSPARENT\r\n", ""),
 )
 
 
@@ -167,7 +170,7 @@ def test_firm_attribution_is_not_part_of_the_event_key() -> None:
 def test_unfiltered_feed_is_byte_identical_to_the_base_branch() -> None:
     ics = _render(_state())
     assert hashlib.sha256(ics.encode("utf-8")).hexdigest() == CURRENT_ICS_SHA256
-    # The rename is the only thing that moved.
+    # The rename, folding and TRANSP are the only things that moved.
     legacy = _as_before_the_rename(ics)
     assert hashlib.sha256(legacy.encode("utf-8")).hexdigest() == BASE_ICS_SHA256
 
