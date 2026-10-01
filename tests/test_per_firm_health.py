@@ -355,3 +355,39 @@ def test_healthz_shows_each_firms_calendar_and_its_rejections() -> None:
 
     page = render_page(State(), status.snapshot(now=NOW)).decode("utf-8")
     assert "1 extracted event(s) not published" in page
+
+
+def test_a_firm_with_nothing_upcoming_says_why() -> None:
+    """Blueberry's calendar empties between their dated lists; the page must say so."""
+    note = "Blueberry Funded lists dated windows only from time to time."
+    idle = FirmOutcome(
+        name="blueberry-funded",
+        display_name="Blueberry Funded",
+        ok=True,
+        events_upcoming=0,
+        schedule_note=note,
+    )
+    status = status_at()
+    status.record_success(now=NOW, firms=[ok("ftmo", "FTMO"), idle])
+    [ftmo_src, blueberry_src] = status.snapshot(now=NOW)["sources"]
+    assert blueberry_src["schedule_note"] == note
+    assert ftmo_src["schedule_note"] is None
+    assert note in render_page(State(), status.snapshot(now=NOW)).decode("utf-8")
+
+    # With windows on the calendar the note is noise; an error always wins.
+    busy = FirmOutcome(**{**idle.__dict__, "events_upcoming": 2})
+    status.record_success(now=NOW, firms=[ok("ftmo", "FTMO"), busy])
+    assert note not in render_page(State(), status.snapshot(now=NOW)).decode("utf-8")
+    status.record_success(
+        now=NOW, firms=[ok("ftmo", "FTMO"), broken("blueberry-funded", "Blueberry", "HTTP 500")]
+    )
+    page = render_page(State(), status.snapshot(now=NOW)).decode("utf-8")
+    assert "HTTP 500" in page and note not in page
+
+
+def test_only_blueberry_ships_a_schedule_note() -> None:
+    from prop_firm_calendar.sources.profile import available_profiles, load_profile
+
+    notes = {name: load_profile(name).schedule_note for name in available_profiles()}
+    assert "every second Saturday" in notes.pop("blueberry-funded")
+    assert not any(notes.values())

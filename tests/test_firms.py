@@ -8,6 +8,7 @@ project exists to prevent, reached from the other direction.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -379,3 +380,24 @@ def test_a_firms_outcome_reports_its_calendar_and_rejections(tmp_path: Path) -> 
     assert outcome.ok is False  # the run that dropped it raises the anomaly
     assert outcome.as_dict()["rejected"] == list(outcome.rejected)
     assert result.totals().events_deferred == 1
+
+
+def test_the_profiles_schedule_note_reaches_the_outcome(tmp_path: Path) -> None:
+    cfg = write_config(tmp_path, "[[firms]]\nprofile = 'ftmo'\n")
+    plain = stub_resolver({"ftmo": StubSource([make_post("f-1")])})
+
+    def resolve(firm: FirmConfig, scrape=None):  # noqa: ANN001, ANN202
+        resolved = plain(firm, scrape)
+        profile = dataclasses.replace(resolved.profile, schedule_note="Dated\n  rarely.\n")
+        return dataclasses.replace(resolved, profile=profile)
+
+    result = run_firms(
+        config=cfg,
+        sink=StateOnlySink(),
+        state=State(),
+        make_extractor=lambda resolved: StubExtractor(),
+        now=NOW,
+        resolve=resolve,
+        stagger_fn=lambda seconds: 0.0,
+    )
+    assert result.outcomes[0].schedule_note == "Dated rarely."
