@@ -56,3 +56,11 @@ Times are stated in server time (UTC+2) unless the post says otherwise.
 Symbols look like "GER40", "XAUUSD". Every post repeats a risk-warning
 paragraph that describes no scheduled event; ignore it.
 """
+
+# Optional, for subscribers: what this firm publishes and what the calendar
+# deliberately leaves out. Shown on /healthz, and on the status page while the
+# firm has nothing upcoming, so an empty calendar does not read as broken.
+# schedule_note = """
+# Example Firm announces holiday hours a week ahead; platform maintenance is
+# sent by email only and does not appear here.
+# """

@@ -51,6 +51,36 @@ Use the public instance above, or any feed someone hosts for your group:
 Your calendar app re-polls the feed automatically; the feed itself carries a
 refresh hint matching the host's sync interval.
 
+### Subscriber FAQ
+
+- **Which time zone are the events in?** Your own. Each event is an exact
+  instant: the firm's stated time, converted with the offset it gave (or its
+  own zone, e.g. US Central for Topstep). Your calendar app shows it in your
+  local time.
+- **How soon does a new announcement appear?** The public instance checks the
+  firms every 6 hours, and your calendar app then fetches the feed on its own
+  schedule (Google Calendar can take several hours). For a window announced
+  the day before, check the [live page](https://calendar.bogdantruta.com) or
+  the firm's own page. A self-hosted instance can push a Discord, Telegram or
+  webhook message the moment it sees one (see [Notifications](#notifications)).
+- **What does "(unconfirmed)" in a title mean?** The time had to be inferred,
+  or the quote the model gave as its source could not be found word for word
+  in the announcement. Check the linked announcement before relying on it.
+- **Where does an event come from?** Each event's description links the
+  announcement it was read from and, where available, quotes the firm's own
+  words for it.
+- **Can I get only my firm, or only some kinds of event?** Yes: add
+  `?firms=topstep` and/or `?types=early_close,holiday_closure` to the URL
+  ([details](#ics-feed-details)). Each distinct URL is its own calendar.
+- **A firm has nothing on the calendar. Is it broken?** Usually it means
+  nothing dated is announced. The SOURCES panel on the
+  [live page](https://calendar.bogdantruta.com) shows each firm's last
+  successful check and, where it applies, what that firm does not publish:
+  Blueberry Funded, for example, only lists dated windows now and then.
+- **Is this official?** No. It reads the firms' public pages and is not
+  affiliated with any of them; the firm's own announcement is always the
+  authority.
+
 ### Host a feed on your VPS (5 minutes)
 
 Feed-only mode needs **no Google account at all** — one LLM key and one container:
@@ -85,11 +115,14 @@ DNS, Docker, Caddy with automatic HTTPS) is in
 
 ```mermaid
 flowchart LR
-    A[FTMO updates page] -->|scrape all recent posts| B[Content-hash cache]
-    B -->|only new/changed posts| C[LLM extraction<br>Gemini or any OpenAI-compatible API]
-    C --> D[Validation<br>duration, dates, timezone]
-    D --> E[Reconcile<br>create / update / delete]
-    E --> F[(Google Calendar)]
+    S[Firm announcement pages<br>FTMO · Topstep · Blueberry Funded · E8 Markets<br>one TOML profile each] -->|polite fetch<br>robots.txt, rate limit| H[Content-hash cache]
+    H -->|new or changed posts only| X[LLM extraction<br>temperature 0, JSON schema,<br>voted across runs]
+    X --> V[Validation<br>times, offsets, durations,<br>quoted evidence checked]
+    V --> R[Reconcile per post<br>create / update / keep<br>refuses to delete on doubt]
+    R --> F[ICS feed<br>per firm, per event type]
+    R --> A[Read-only JSON API]
+    R --> G[(Google Calendar<br>optional)]
+    V -.->|rejections, anomalies| M["/healthz 503<br>notifications<br>status page"]
 ```
 
 - **Trustworthy sync.** Every created event carries a stable reconcile key. When an
@@ -351,15 +384,18 @@ Each event:
 
 ```json
 {
-  "id": "4560b9cb2193c0f3",
-  "firm": "topstep", "firm_name": "Topstep",
-  "type": "early_close", "summary": "⏳ Early Close — Thanksgiving",
-  "start": "2026-11-26T11:45:00-06:00", "end": "2026-11-26T23:59:00-06:00",
-  "start_utc": "2026-11-26T17:45:00+00:00", "end_utc": "2026-11-27T05:59:00+00:00",
+  "id": "1b859eaec18656fd",
+  "firm": "ftmo", "firm_name": "FTMO",
+  "type": "maintenance", "summary": "⚠️ Platform Maintenance — cTrader",
+  "start": "2026-10-03T08:00:00+03:00", "end": "2026-10-03T22:00:00+03:00",
+  "start_utc": "2026-10-03T05:00:00+00:00", "end_utc": "2026-10-03T19:00:00+00:00",
   "status": "upcoming",
-  "source_url": "https://help.topstep.com/en/articles/13350348-topstep-holiday-trading-hours"
+  "source_url": "https://ftmo.com/en/trading-updates/",
+  "evidence": "We will perform scheduled maintenance on the cTrader trading platform on Saturday , 3 Oct 2026 , between 8:00 and 22:00 ."
 }
 ```
+
+(A real row from the public instance, 1 Oct 2026.)
 
 `status` is `upcoming`, `live` or `past` at `generated_at`; `start`/`end` are in
 the offset the calendar stores, `*_utc` are the same instants in UTC. `id` is

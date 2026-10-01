@@ -85,6 +85,7 @@ class FirmStatus:
     events_upcoming: int | None = None
     events_deferred: int = 0
     rejected: tuple[str, ...] = ()
+    schedule_note: str = ""
 
     def snapshot(self, now: datetime, stale_after: float, fallback: str | None) -> dict:
         since = _age(now, self.last_success or fallback)
@@ -112,6 +113,7 @@ class FirmStatus:
             "events_upcoming": self.events_upcoming,
             "events_deferred": self.events_deferred,
             "rejected_extractions": list(self.rejected),
+            "schedule_note": self.schedule_note or None,
         }
 
 
@@ -182,6 +184,7 @@ class ServerStatus:
             entry.events_upcoming = upcoming if isinstance(upcoming, int) else None
             entry.events_deferred = int(getattr(outcome, "events_deferred", 0) or 0)
             entry.rejected = tuple(getattr(outcome, "rejected", ()) or ())
+            entry.schedule_note = str(getattr(outcome, "schedule_note", "") or "")
 
     def record_failure(self, error: BaseException, now: datetime | None = None) -> None:
         with self._lock:
