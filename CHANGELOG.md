@@ -10,11 +10,11 @@ config, env or systemd change**: everything new is either opt-in or additive.
   (any mix of providers, each with its own key variable) extract every changed
   post once each; an event is published only when `panel_quorum` of them (a
   majority by default) extracted the same window. A failed model abstains and
-  counts against every event, and with fewer answers than the quorum the sync
-  fails rather than reporting an empty announcement. A window too few models
-  saw is not published but is reported like a rejected extraction (anomaly,
-  notification, `rejected_extractions` on `/healthz`). Without a panel the
-  single-model extractor is unchanged (same prompt, same voting)
+  counts against every event, and with fewer answers than the quorum that
+  firm's sync fails rather than reporting an empty announcement. A window too
+  few models saw is not published but is reported like a rejected extraction
+  (anomaly, notification, `rejected_extractions` on `/healthz`). Without a
+  panel the single-model extractor is unchanged (same prompt, same voting)
 - **`/healthz` `extraction`** (#8): which models extract events and how many
   must agree, or the single-model consensus. `prop-firm-calendar eval` also
   scores each panel member alone, from the same calls

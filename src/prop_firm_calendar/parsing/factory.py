@@ -43,7 +43,7 @@ def make_jurors(cfg: LLMConfig) -> list[Juror]:
         if not member.api_key:
             raise ConfigError(
                 f"no API key for panel model {member.label!r} — set the "
-                f"{member.api_key_env} environment variable, e.g. in a .env file"
+                f"{member.api_key_env or 'LLM_API_KEY'} environment variable, e.g. in a .env file"
             )
         endpoint = (member.provider, member.base_url, member.api_key)
         if endpoint not in clients:
