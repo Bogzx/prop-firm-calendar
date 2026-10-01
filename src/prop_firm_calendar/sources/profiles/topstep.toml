@@ -71,6 +71,11 @@ By | Reopen After.
 - The "Reopen After" column is the normal Sunday/holiday-evening session reopen
   (usually 17:00 CT). That is a resumption, not an interruption: do not emit an
   event for it on its own.
+- The table names no symbols: every row applies to all of Topstep's CME
+  products. Even so, ALWAYS set "affected" to the row's name from the Holiday
+  column, verbatim (e.g. "Thanksgiving", "Day After Thanksgiving", "Christmas
+  Eve"), so the calendar entry says which holiday it is. For the SIM/Live row,
+  add the two cutoffs after the name ("Juneteenth — Live 11:10 CT, SIM 11:45 CT").
 
 Ignore entirely: the standing "CME Protocol" / blended-trade-date explanation,
 the daily-loss-limit discussion, the account-type comparison table, and the

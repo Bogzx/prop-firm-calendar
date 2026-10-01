@@ -181,6 +181,11 @@ def render_page(
             else:
                 when = "unknown"
             rejected = entry.get("rejected_extractions") or []
+            # A healthy firm with nothing upcoming says why, when its profile
+            # knows (Blueberry only tabulates dates now and then): an empty
+            # calendar should read as "nothing dated is announced", not as a
+            # scraper that quietly broke.
+            idle_note = entry.get("schedule_note") if entry.get("events_upcoming") == 0 else None
             detail = (
                 entry.get("last_error")
                 or "; ".join(entry.get("anomalies") or [])
@@ -189,9 +194,11 @@ def render_page(
                     if rejected
                     else ""
                 )
+                or idle_note
+                or ""
             )
             detail_html = (
-                f'<span class="srcnote">{html.escape(str(detail)[:200])}</span>' if detail else ""
+                f'<span class="srcnote">{html.escape(str(detail)[:300])}</span>' if detail else ""
             )
             cards.append(
                 f'<div class="src {cls}"><span class="dot"></span>'

@@ -49,6 +49,8 @@ class FirmOutcome:
     events_upcoming: int = 0
     events_deferred: int = 0
     rejected: tuple[str, ...] = ()
+    #: The profile's schedule_note (what this firm does and does not publish).
+    schedule_note: str = ""
 
     def as_dict(self) -> dict:
         return {
@@ -211,6 +213,7 @@ def _run_one(
         events_created=report.events_created,
         events_deleted=report.events_deleted,
         events_kept=report.events_kept,
+        schedule_note=" ".join(resolved.profile.schedule_note.split()),
         **_calendar_counts(state, resolved.name, now),
     )
 

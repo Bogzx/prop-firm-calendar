@@ -13,7 +13,11 @@
     "null defers to the profile's America/Chicago zone, which resolves each date correctly.",
     "",
     "Juneteenth gives two cutoffs (SIM 11:45 CT, Live 11:10 CT). The earlier one is used so",
-    "the warning fires in time for both account types, and both are named in 'affected'."
+    "the warning fires in time for both account types, and both are named in 'affected'.",
+    "",
+    "'affected' is the Holiday column's name (2026-10-01): the table lists no symbols,",
+    "and the general prompt rule (null when everything is affected) left every title a",
+    "bare 'Early Close'. The profile's prompt_hints now ask for the name."
   ],
   "events": [
     {
@@ -21,7 +25,7 @@
       "start_time": "2026-01-01T00:00:00",
       "end_time": "2026-01-01T23:59:00",
       "stated_utc_offset": null,
-      "affected": "New Year's Day — markets closed",
+      "affected": "New Year's Day",
       "confidence": "high"
     },
     {
@@ -29,7 +33,7 @@
       "start_time": "2026-01-19T11:45:00",
       "end_time": "2026-01-19T23:59:00",
       "stated_utc_offset": null,
-      "affected": "MLK Day — close positions by 11:45 CT",
+      "affected": "MLK Day",
       "confidence": "high"
     },
     {
@@ -37,7 +41,7 @@
       "start_time": "2026-02-16T11:45:00",
       "end_time": "2026-02-16T23:59:00",
       "stated_utc_offset": null,
-      "affected": "Presidents' Day — close positions by 11:45 CT",
+      "affected": "Presidents' Day",
       "confidence": "high"
     },
     {
@@ -45,7 +49,7 @@
       "start_time": "2026-04-03T08:00:00",
       "end_time": "2026-04-03T23:59:00",
       "stated_utc_offset": null,
-      "affected": "Good Friday — close positions by 08:00 CT",
+      "affected": "Good Friday",
       "confidence": "high"
     },
     {
@@ -53,7 +57,7 @@
       "start_time": "2026-05-25T11:45:00",
       "end_time": "2026-05-25T23:59:00",
       "stated_utc_offset": null,
-      "affected": "Memorial Day — close positions by 11:45 CT",
+      "affected": "Memorial Day",
       "confidence": "high"
     },
     {
@@ -69,7 +73,7 @@
       "start_time": "2026-07-03T11:45:00",
       "end_time": "2026-07-03T23:59:00",
       "stated_utc_offset": null,
-      "affected": "Independence Day — close positions by 11:45 CT",
+      "affected": "Independence Day",
       "confidence": "high"
     },
     {
@@ -77,7 +81,7 @@
       "start_time": "2026-09-07T11:45:00",
       "end_time": "2026-09-07T23:59:00",
       "stated_utc_offset": null,
-      "affected": "Labor Day — close positions by 11:45 CT",
+      "affected": "Labor Day",
       "confidence": "high"
     },
     {
@@ -85,7 +89,7 @@
       "start_time": "2026-11-26T11:45:00",
       "end_time": "2026-11-26T23:59:00",
       "stated_utc_offset": null,
-      "affected": "Thanksgiving — close positions by 11:45 CT",
+      "affected": "Thanksgiving",
       "confidence": "high"
     },
     {
@@ -93,7 +97,7 @@
       "start_time": "2026-11-27T12:00:00",
       "end_time": "2026-11-27T23:59:00",
       "stated_utc_offset": null,
-      "affected": "Day After Thanksgiving — close positions by 12:00 CT",
+      "affected": "Day After Thanksgiving",
       "confidence": "high"
     },
     {
@@ -101,7 +105,7 @@
       "start_time": "2026-12-24T12:00:00",
       "end_time": "2026-12-24T23:59:00",
       "stated_utc_offset": null,
-      "affected": "Christmas Eve — close positions by 12:00 CT",
+      "affected": "Christmas Eve",
       "confidence": "high"
     },
     {
@@ -109,7 +113,7 @@
       "start_time": "2026-12-25T00:00:00",
       "end_time": "2026-12-25T23:59:00",
       "stated_utc_offset": null,
-      "affected": "Christmas Day — markets closed",
+      "affected": "Christmas Day",
       "confidence": "high"
     },
     {
@@ -117,7 +121,7 @@
       "start_time": "2027-01-01T00:00:00",
       "end_time": "2027-01-01T23:59:00",
       "stated_utc_offset": null,
-      "affected": "New Year's Day — markets closed",
+      "affected": "New Year's Day",
       "confidence": "high"
     }
   ]
