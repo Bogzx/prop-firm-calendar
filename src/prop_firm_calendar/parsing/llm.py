@@ -1,10 +1,17 @@
-"""Provider-agnostic LLM extraction with validation, repair retry, and model fallback."""
+"""Provider-agnostic LLM extraction: validation, repair retry, model fallback, voting.
+
+Two ways to vote. EventExtractor asks one model N times and keeps the majority
+(stable output from a nondeterministic API). PanelExtractor asks several
+independent models once each and publishes only what a quorum of them agree on.
+"""
 
 from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -114,6 +121,103 @@ _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$")
 _THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
+def build_prompt(text: str, prompt_hints: str = "") -> str:
+    hints = f"\nAbout this source specifically:\n{prompt_hints}\n" if prompt_hints else ""
+    return PROMPT_TEMPLATE.format(text=text, hints=hints)
+
+
+def _parse(raw: str) -> list[RawEvent]:
+    cleaned = _THINK.sub("", raw)  # reasoning models (DeepSeek R1, …) inline <think> blocks
+    cleaned = _FENCE.sub("", cleaned.strip()).strip()
+    try:
+        return _EVENTS.validate_json(cleaned)
+    except ValidationError:
+        # Some models wrap the array in prose despite instructions —
+        # fall back to the outermost JSON array in the reply.
+        start, end = cleaned.find("["), cleaned.rfind("]")
+        if 0 <= start < end:
+            return _EVENTS.validate_json(cleaned[start : end + 1])
+        raise
+
+
+def _extract_once(backend: LLMBackend, prompt: str, model: str) -> list[RawEvent]:
+    """One model's answer, with one repair retry on an invalid reply."""
+    raw = backend.complete(prompt, model)
+    try:
+        return _parse(raw)
+    except ValidationError as first:
+        logger.info("Invalid extraction from %s; attempting repair retry", model)
+        repair_prompt = (
+            f"{prompt}\n\nYour previous reply was invalid: {str(first)[:500]}\n"
+            "Reply again with ONLY the corrected JSON array."
+        )
+        raw = backend.complete(repair_prompt, model)
+        try:
+            return _parse(raw)
+        except ValidationError as second:
+            raise ExtractionError(f"invalid JSON after repair retry: {second}") from second
+
+
+VoteKey = tuple[str, str, str]
+
+
+def exact_key(event: RawEvent) -> VoteKey:
+    """Identity for repeated runs of one model: its output strings, verbatim.
+
+    stated_utc_offset is left out: one announcement has one timezone context,
+    and offset-None resolves to the same instant downstream, so an offset
+    attribution flicker must not split the vote. So are `affected`,
+    confidence and evidence, which are wording, not the window. The most
+    explicit variant wins the merge.
+    """
+    return (event.event_type, event.start_time, event.end_time)
+
+
+def _instant(value: str) -> str:
+    """'08:00' and '08:00:00' are one statement; anything unparseable stays as given."""
+    try:
+        return datetime.fromisoformat(value).isoformat(timespec="minutes")
+    except ValueError:
+        return value
+
+
+def panel_key(event: RawEvent) -> VoteKey:
+    """Identity across different models: exact_key, compared as instants.
+
+    One model formats its timestamps the same way every run; models from
+    different vendors do not, and "2026-10-03T08:00" against
+    "2026-10-03T08:00:00" must count as agreement, not as two events with
+    one vote each.
+    """
+    return (event.event_type, _instant(event.start_time), _instant(event.end_time))
+
+
+@dataclass(frozen=True)
+class Tally:
+    event: RawEvent
+    voters: tuple[str, ...]
+
+
+def tally(
+    ballots: Sequence[tuple[str, Sequence[RawEvent]]],
+    key: Callable[[RawEvent], VoteKey] = exact_key,
+) -> list[Tally]:
+    """Who extracted what, in first-seen order. One vote per voter per event."""
+    voters: dict[VoteKey, list[str]] = {}
+    merged: dict[VoteKey, RawEvent] = {}
+    for voter, events in ballots:
+        for event in events:
+            identity = key(event)
+            names = voters.setdefault(identity, [])
+            if voter in names:
+                continue
+            names.append(voter)
+            merged[identity] = (
+                _merge_variant(merged[identity], event) if identity in merged else event
+            )
+    return [Tally(merged[identity], tuple(names)) for identity, names in voters.items()]
+
+
 class EventExtractor:
     def __init__(
         self,
@@ -137,12 +241,11 @@ class EventExtractor:
         Hosted APIs (notably OpenRouter, which routes one model id across
         several providers) are not perfectly deterministic even at
         temperature 0. Majority voting across runs makes the reported event
-        set stable run-to-run.
+        set stable run-to-run. It does not make the extraction any more right:
+        every run is the same model reading the same text. For that, see
+        PanelExtractor.
         """
-        hints = ""
-        if self.prompt_hints:
-            hints = f"\nAbout this source specifically:\n{self.prompt_hints}\n"
-        prompt = PROMPT_TEMPLATE.format(text=text, hints=hints)
+        prompt = build_prompt(text, self.prompt_hints)
         if self.consensus_runs == 1:
             return self._extract_with_fallback(prompt)
         runs = [self._extract_with_fallback(prompt) for _ in range(self.consensus_runs)]
@@ -152,36 +255,16 @@ class EventExtractor:
         last_error: Exception | None = None
         for model in self.models:
             try:
-                return self._extract_once(prompt, model)
+                return _extract_once(self.backend, prompt, model)
             except (BackendError, ExtractionError) as e:
                 logger.warning("Model %s failed: %s", model, e)
                 last_error = e
         raise ExtractionError(f"all models failed; last error: {last_error}")
 
     def _consensus(self, runs: list[list[RawEvent]]) -> list[RawEvent]:
-        # Identity excludes stated_utc_offset: one announcement has one timezone
-        # context, and offset-None resolves to the same instant downstream — an
-        # offset-attribution flicker must not split the vote. The most explicit
-        # variant wins the merge.
         majority = self.consensus_runs // 2 + 1
-        counts: dict[tuple, int] = {}
-        merged: dict[tuple, RawEvent] = {}
-        order: list[tuple] = []
-        for run in runs:
-            seen_this_run: set[tuple] = set()
-            for event in run:
-                key = (event.event_type, event.start_time, event.end_time)
-                if key in seen_this_run:
-                    continue
-                seen_this_run.add(key)
-                counts[key] = counts.get(key, 0) + 1
-                if key not in merged:
-                    merged[key] = event
-                    order.append(key)
-                else:
-                    merged[key] = _merge_variant(merged[key], event)
-        kept = [merged[key] for key in order if counts[key] >= majority]
-        dropped = [key for key in order if counts[key] < majority]
+        counted = tally([(f"run {i}", run) for i, run in enumerate(runs, 1)])
+        dropped = [exact_key(t.event) for t in counted if len(t.voters) < majority]
         if dropped:
             logger.info(
                 "Consensus (%d runs) dropped %d minority event(s): %s",
@@ -189,34 +272,114 @@ class EventExtractor:
                 len(dropped),
                 dropped,
             )
-        return kept
+        return [t.event for t in counted if len(t.voters) >= majority]
 
-    def _extract_once(self, prompt: str, model: str) -> list[RawEvent]:
-        raw = self.backend.complete(prompt, model)
-        try:
-            return self._parse(raw)
-        except ValidationError as first:
-            logger.info("Invalid extraction from %s; attempting repair retry", model)
-            repair_prompt = (
-                f"{prompt}\n\nYour previous reply was invalid: {str(first)[:500]}\n"
-                "Reply again with ONLY the corrected JSON array."
-            )
-            raw = self.backend.complete(repair_prompt, model)
+
+@dataclass(frozen=True)
+class Juror:
+    """One model on an extraction panel, and the backend that serves it."""
+
+    name: str
+    backend: LLMBackend
+    model: str
+
+
+@dataclass(frozen=True)
+class Ballot:
+    """One juror's answer for one post. `events` is None when it abstained."""
+
+    juror: str
+    events: tuple[RawEvent, ...] | None
+    error: str = ""
+
+
+@dataclass(frozen=True)
+class Dispute:
+    """An event some of the panel extracted, but too few to publish."""
+
+    event: RawEvent
+    voters: tuple[str, ...]
+    panel: tuple[str, ...]
+    quorum: int
+
+    def describe(self) -> str:
+        others = [name for name in self.panel if name not in self.voters]
+        return (
+            f"only {len(self.voters)} of {len(self.panel)} models extracted it "
+            f"(quorum {self.quorum}): {', '.join(self.voters)} did; "
+            f"{', '.join(others)} did not"
+        )
+
+
+class PanelExtractor:
+    """Several independent models extract the same post; a quorum must agree.
+
+    Repeating one model (EventExtractor's consensus_runs) smooths out sampling
+    noise but repeats its systematic misreadings: a model that reads "8:00 CT"
+    as 08:00 UTC does so on every run. Models from different vendors misread
+    different things, so an event is published only when at least `quorum` of
+    them extracted the same (type, start, end) — and an event that fewer
+    extracted is reported as a Dispute rather than dropped silently, because a
+    lone model may also be the only one that read the announcement right.
+
+    A juror whose call fails abstains, which counts against every event: an
+    outage at one vendor makes the panel stricter, never more lenient. With
+    fewer answers than the quorum no event could pass, so the extraction
+    fails outright instead of reporting an empty announcement.
+    """
+
+    def __init__(self, jurors: Sequence[Juror], quorum: int = 0, prompt_hints: str = "") -> None:
+        if len(jurors) < 2:
+            raise ValueError("a panel needs at least two models")
+        names = [juror.name for juror in jurors]
+        if len(set(names)) != len(names):
+            raise ValueError(f"panel model names must be unique: {names}")
+        self.jurors = list(jurors)
+        self.quorum = quorum or len(jurors) // 2 + 1
+        if not 1 <= self.quorum <= len(jurors):
+            raise ValueError(f"quorum must be between 1 and {len(jurors)}, got {quorum}")
+        self.prompt_hints = prompt_hints.strip()
+        #: Every juror's answer for the last post, for the eval harness: each
+        #: model can be scored alone without paying for another call.
+        self.last_ballots: list[Ballot] = []
+        #: Events the last post's panel disagreed on (see Dispute).
+        self.last_disputes: list[Dispute] = []
+
+    def extract(self, text: str) -> list[RawEvent]:
+        prompt = build_prompt(text, self.prompt_hints)
+        self.last_ballots = []
+        self.last_disputes = []
+        for juror in self.jurors:
             try:
-                return self._parse(raw)
-            except ValidationError as second:
-                raise ExtractionError(f"invalid JSON after repair retry: {second}") from second
+                events = _extract_once(juror.backend, prompt, juror.model)
+            except (BackendError, ExtractionError) as e:
+                logger.warning("Panel model %s abstained: %s", juror.name, e)
+                self.last_ballots.append(Ballot(juror.name, None, str(e)))
+            else:
+                self.last_ballots.append(Ballot(juror.name, tuple(events)))
 
-    @staticmethod
-    def _parse(raw: str) -> list[RawEvent]:
-        cleaned = _THINK.sub("", raw)  # reasoning models (DeepSeek R1, …) inline <think> blocks
-        cleaned = _FENCE.sub("", cleaned.strip()).strip()
-        try:
-            return _EVENTS.validate_json(cleaned)
-        except ValidationError:
-            # Some models wrap the array in prose despite instructions —
-            # fall back to the outermost JSON array in the reply.
-            start, end = cleaned.find("["), cleaned.rfind("]")
-            if 0 <= start < end:
-                return _EVENTS.validate_json(cleaned[start : end + 1])
-            raise
+        answered = [(b.juror, b.events) for b in self.last_ballots if b.events is not None]
+        if len(answered) < self.quorum:
+            failures = "; ".join(f"{b.juror}: {b.error}" for b in self.last_ballots if b.error)
+            raise ExtractionError(
+                f"only {len(answered)} of {len(self.jurors)} panel models answered and "
+                f"{self.quorum} must agree — {failures}"
+            )
+        panel = tuple(juror.name for juror in self.jurors)
+        kept: list[RawEvent] = []
+        for counted in tally(answered, key=panel_key):
+            if len(counted.voters) >= self.quorum:
+                kept.append(counted.event)
+            else:
+                self.last_disputes.append(
+                    Dispute(counted.event, counted.voters, panel, self.quorum)
+                )
+        for dispute in self.last_disputes:
+            logger.warning(
+                "Panel disagreement on %s %s–%s: %s",
+                dispute.event.event_type,
+                dispute.event.start_time,
+                dispute.event.end_time,
+                dispute.describe(),
+            )
+        return kept

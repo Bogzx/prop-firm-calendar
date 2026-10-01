@@ -266,6 +266,11 @@ def test_serve_wires_every_firm_into_the_feed_the_api_and_health(
     assert captured["firm_titles"]["topstep"] == "Topstep"
     assert captured["firm_urls"]["topstep"].startswith("https://help.topstep.com/")
     assert captured["source_name"] == "FTMO, Topstep"
+    assert captured["extraction"] == {
+        "mode": "consensus",
+        "models": ["gemini-2.5-flash", "gemini-2.0-flash"],
+        "runs": 3,
+    }
     # Last-good data is published before the first sync, with per-firm links.
     feed = (tmp_path / "ftmo-events.ics").read_text(encoding="utf-8").replace("\r\n ", "")
     assert "Source: https://help.topstep.com/" in feed

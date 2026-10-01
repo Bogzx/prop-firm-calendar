@@ -239,25 +239,19 @@ def _run_sync(config: AppConfig, dry_run: bool) -> MultiRunReport:
     pipeline run, and a scrape failure still propagates out of here.
     """
     from prop_firm_calendar.firms import run_firms
-    from prop_firm_calendar.parsing.factory import make_backend
-    from prop_firm_calendar.parsing.llm import EventExtractor
+    from prop_firm_calendar.parsing.factory import make_extractor_factory
     from prop_firm_calendar.state import load_state, save_state
 
     if not config.calendar.enabled:
         # Without Google, the ICS feed is the only output — force it on.
         config = dataclasses.replace(config, ics=dataclasses.replace(config.ics, enabled=True))
 
-    backend = make_backend(config.llm)
+    extractor_for = make_extractor_factory(config.llm)
 
-    def make_extractor(resolved) -> EventExtractor:  # noqa: ANN001 - ResolvedFirm
+    def make_extractor(resolved):  # noqa: ANN001, ANN202 - ResolvedFirm -> Extractor
         # Prompt hints are per firm: house vocabulary and the boilerplate that
         # firm repeats in every post.
-        return EventExtractor(
-            backend,
-            config.llm.models,
-            consensus_runs=config.llm.consensus_runs,
-            prompt_hints=resolved.profile.prompt_hints,
-        )
+        return extractor_for(resolved.profile.prompt_hints)
 
     sink = _build_sink(config, dry_run)
     state = load_state(config.state_path)
@@ -353,6 +347,7 @@ def _cmd_serve(config: AppConfig, port_override: int | None) -> int:
             tz_name=config.calendar.timezone,
         ).encode("utf-8")
 
+    from prop_firm_calendar.parsing.factory import describe_extraction
     from prop_firm_calendar.stats import StatsStore
 
     names = [_firm_name(f.profile) for f in config.enabled_firms]
@@ -370,37 +365,33 @@ def _cmd_serve(config: AppConfig, port_override: int | None) -> int:
         valid_firms=names,
         firm_titles=titles,
         firm_urls=urls,
+        extraction=describe_extraction(config.llm),
     )
 
 
 def _cmd_eval(config: AppConfig, args: argparse.Namespace) -> int:
     """Run the extraction eval; exit 1 when the gate fails, 2 when it cannot run."""
     from prop_firm_calendar.evaluation import EvalError, discover, evaluate
-    from prop_firm_calendar.parsing.factory import make_backend
-    from prop_firm_calendar.parsing.llm import EventExtractor
+    from prop_firm_calendar.parsing.factory import calls_per_extraction, make_extractor_factory
 
     try:
         cases = discover(args.fixtures, args.firm)
     except (EvalError, ConfigError) as e:
         logger.error("%s", e)
         return EXIT_CONFIG
-    backend = make_backend(config.llm)
-    calls = len(cases) * max(1, args.runs) * config.llm.consensus_runs
+    extractor_for = make_extractor_factory(config.llm)
+    per_post = calls_per_extraction(config.llm)
     logger.info(
-        "Evaluating %d fixture(s) x %d run(s) x %d consensus = at least %d LLM call(s)",
+        "Evaluating %d fixture(s) x %d run(s) x %d %s = at least %d LLM call(s)",
         len(cases),
         max(1, args.runs),
-        config.llm.consensus_runs,
-        calls,
+        per_post,
+        "panel model(s)" if config.llm.panel else "consensus",
+        len(cases) * max(1, args.runs) * per_post,
     )
     report = evaluate(
         cases,
-        lambda profile: EventExtractor(
-            backend,
-            config.llm.models,
-            consensus_runs=config.llm.consensus_runs,
-            prompt_hints=profile.prompt_hints,
-        ),
+        lambda profile: extractor_for(profile.prompt_hints),
         runs=args.runs,
         max_missing=args.max_missing,
         max_extra=args.max_extra,

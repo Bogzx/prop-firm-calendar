@@ -208,6 +208,58 @@ reasoning `<think>` blocks (DeepSeek R1 etc.), markdown fences, and prose around
 the JSON, and retries with the validation error before falling back to the next
 model in `models`.
 
+### Several models that must agree (optional)
+
+By default one model extracts each changed post `consensus_runs` times (3) and
+the majority wins. That makes the output stable on nondeterministic APIs, but
+every run is the same model reading the same text: whatever it misreads, it
+misreads three times. A **model panel** asks several independent models instead,
+one call each, and publishes an event only when a quorum of them extracted the
+same window (type, start, end):
+
+```toml
+[llm]
+panel_quorum = 2                      # 0 or unset = a majority of the panel
+
+[[llm.panel]]
+model = "deepseek-chat"
+provider = "openai-compatible"
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"      # keys stay in .env; this names the variable
+
+[[llm.panel]]
+model = "gemini-2.5-flash"
+provider = "gemini"
+api_key_env = "GEMINI_API_KEY"
+
+[[llm.panel]]
+model = "openai/gpt-5-mini"
+provider = "openai-compatible"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+```
+
+A member that names no `provider` inherits `[llm]`'s provider, `base_url` and
+`LLM_API_KEY`, so several models behind one OpenRouter key need only `model`.
+
+- **A window the panel disagrees on is not published, and not dropped
+  quietly either.** If it has not ended, it is reported like any other
+  rejected extraction (an anomaly for that run, a notification, and an entry
+  under `rejected_extractions` on `/healthz`), naming which models saw it.
+- **A model that errors abstains, and that counts against every event.** 2 of
+  3 must still agree, so an outage at one vendor never lowers the bar. If
+  fewer models answer than the quorum, the firm's sync fails loudly and the
+  last good feed keeps serving.
+- **The cost is the same as the default:** a panel of three makes three calls
+  per changed post, like `consensus_runs = 3`. Unchanged posts still cost
+  nothing.
+- **`/healthz` says which mode is running** (`extraction`: the models and the
+  quorum, or the single-model consensus).
+- **`prop-firm-calendar eval` also scores each member alone** from the same
+  calls, so you can see which model would have been wrong on its own.
+
+Without `[[llm.panel]]` nothing changes.
+
 ## Google Calendar setup
 
 ### Option A: OAuth (desktop machines)
@@ -315,7 +367,8 @@ UTC, since RFC 5545 reads a repeated local time as its first occurrence.
   `last_success_age_seconds`, `stale`, `next_run`, `last_error`, `anomalies`,
   plus `sources` (per-firm health, including `events_upcoming`,
   `events_deferred` and `rejected_extractions` — what each firm's calendar
-  holds and what validation kept out of it) and `unhealthy_sources`.
+  holds and what validation kept out of it), `unhealthy_sources`, and
+  `extraction` (the models extracting events and how many must agree).
   **HTTP 503 when not `ok`**, so a plain uptime monitor detects a broken sync.
 
 **Per-firm health.** With several firms configured, each carries its own
